@@ -68,7 +68,7 @@ export type FieldResult = { request: Request; changed: boolean };
 
 export type StatusFilter = "open" | "done" | "all" | Status;
 export type ListFilter = { status?: StatusFilter; personId?: number; limit?: number; offset?: number };
-export type ListItem = Request & { requester: Person; assignee: Person; attachmentCount: number };
+export type ListItem = Request & { requester: Person; assignee: Person; attachmentCount: number; threadCount: number };
 export type ListResult = { items: ListItem[]; counts: { open: number; done: number; all: number } };
 
 export type DetailMessage = RequestMessage & { from: Person | null };
@@ -433,6 +433,7 @@ async function list(db: DbClient, scope: SQL | undefined, filter: ListFilter): P
         requester: requesterP,
         assignee: assigneeP,
         attachmentCount: sql<number>`(SELECT count(*) FROM ${attachments} WHERE ${attachments.requestId} = ${requests.id})::int`,
+        threadCount: sql<number>`(SELECT count(*) FROM ${requestMessages} WHERE ${requestMessages.requestId} = ${requests.id} AND ${requestMessages.kind} = 'thread')::int`,
       })
       .from(requests)
       .innerJoin(requesterP, eq(requesterP.id, requests.requesterId))
@@ -451,7 +452,7 @@ async function list(db: DbClient, scope: SQL | undefined, filter: ListFilter): P
       .where(where),
   ]);
   return {
-    items: rows.map((r) => ({ ...r.request, requester: r.requester, assignee: r.assignee, attachmentCount: r.attachmentCount })),
+    items: rows.map((r) => ({ ...r.request, requester: r.requester, assignee: r.assignee, attachmentCount: r.attachmentCount, threadCount: r.threadCount })),
     counts,
   };
 }
