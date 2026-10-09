@@ -31,5 +31,6 @@ export type OutgoingMessage = {
   requestId?: number | null;
   /** people.id of a DM recipient, so a 403 can flip started_bot off */
   recipientPersonId?: number | null;
-  buttons?: { text: string; url: string }[];
+  /** url buttons, or callback buttons the webhook handles (e.g. `st:<id>:done` on the assignee DM) */
+  buttons?: ({ text: string; url: string } | { text: string; callback_data: string })[];
 };

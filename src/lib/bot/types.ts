@@ -114,6 +114,8 @@ export type Intent =
   | ({ kind: "start"; code: string | null } & MessageCtx)
   /** Callback button "Yes, log me in" (callback_data `login:<code>`). */
   | { kind: "login-confirm"; code: string; callbackQueryId: string; from: TgUser; message: TgMessage | null }
+  /** "✅ Done" / "🔄 On it" buttons on the assignee DM (callback_data `st:<requestId>:<done|in_progress>`). */
+  | { kind: "status-button"; requestId: number; status: "done" | "in_progress"; callbackQueryId: string; from: TgUser; message: TgMessage | null }
   /** Bare `@bot` with no text and no reply: short help reply, nothing created. */
   | ({ kind: "help-mention" } & MessageCtx)
   /** The bot was added to / removed from a chat (warn the superadmin if it can't read messages). */
