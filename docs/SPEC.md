@@ -10,6 +10,8 @@ bot webhook, UI tokens/components). Copy the Telegram login flow **exactly** (lo
 /api/auth/poll, /login?code= confirm page, bot `/start <code>` → "Yes, log me in" callback, magic links, HMAC
 session cookie). MCP reference: `../eci-events-mcp/src/mcp`.
 
+**This repo is public: never commit secrets, real Telegram ids, or real user data. `.env*` stays gitignored.**
+
 ## Stack
 Next.js 16 (read `node_modules/next/dist/docs/` before using APIs — this Next has breaking changes), React 19,
 Tailwind 4 + shadcn (base-ui) components copied from eci-travel-coop, drizzle-orm + `@neondatabase/serverless`
