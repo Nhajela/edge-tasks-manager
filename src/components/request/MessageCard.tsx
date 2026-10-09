@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 import type { DetailMessage } from "@/services/requests";
 
 /** Relative and signed, so it works on any host (dev ports, previews). */
-const fileHref = (id: number) => `/api/files/${id}?sig=${signFileId(id)}`;
+export const fileHref = (id: number) => `/api/files/${id}?sig=${signFileId(id)}`;
 
 /** One Telegram message: author, time, text, photos/files, and "Open in Telegram". */
 export function MessageCard({
@@ -17,11 +17,14 @@ export function MessageCard({
   attachments,
   quote,
   compact,
+  action,
 }: {
   message: DetailMessage;
   attachments: Attachment[];
   quote?: ReactNode;
   compact?: boolean;
+  /** shown on the footer line, e.g. ⭐ Mark as deliverable */
+  action?: ReactNode;
 }) {
   const files = attachments.filter((a) => a.chatId === m.chatId && a.messageId === m.messageId);
   const name = displayName(m.from);
@@ -55,10 +58,15 @@ export function MessageCard({
             </div>
           )}
         </div>
-        {m.link && (
-          <a href={m.link} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1 py-1 text-[13px] font-medium text-teal-deep underline-offset-2 hover:underline">
-            Open in Telegram <ExternalLink className="size-3.5" aria-hidden />
-          </a>
+        {(m.link || action) && (
+          <div className="flex flex-wrap items-center gap-x-4">
+            {m.link && (
+              <a href={m.link} target="_blank" rel="noreferrer" className="inline-flex w-fit items-center gap-1 py-1 text-[13px] font-medium text-teal-deep underline-offset-2 hover:underline">
+                Open in Telegram <ExternalLink className="size-3.5" aria-hidden />
+              </a>
+            )}
+            {action}
+          </div>
         )}
       </div>
     </article>

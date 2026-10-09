@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { STATUSES, STATUS_LABEL } from "@/lib/constants";
 import type { ActionResult, Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { DoneSheet, type DoneResult, type PickMessage } from "./DoneSheet";
 
 const SUGGESTIONS = ["On my way", "Ordering it", "Checking", "Waiting on a vendor", "Waiting for a reply", "Tomorrow morning", "Need more info"];
 
@@ -23,15 +24,19 @@ export function StatusControl({
   status,
   customStatus,
   onChange,
+  done,
 }: {
   status: Status;
   customStatus: string | null;
   /** customStatus undefined = keep it when the status is unchanged, clear it otherwise */
   onChange: (status: Status, customStatus: string | null | undefined) => Promise<ActionResult>;
+  /** when given, Done opens the "What was delivered?" sheet instead of saving straight away */
+  done?: { messages: PickMessage[]; initialMessageId: number | null; onDone: (result: DoneResult) => Promise<ActionResult> };
 }) {
   const [shown, setShown] = useOptimistic(status);
   const [, start] = useTransition();
   const [label, setLabel] = useState(customStatus ?? "");
+  const [sheet, setSheet] = useState(false);
 
   const pick = (s: Status) =>
     start(async () => {
@@ -57,7 +62,7 @@ export function StatusControl({
             type="button"
             role="radio"
             aria-checked={shown === s}
-            onClick={() => shown !== s && pick(s)}
+            onClick={() => shown !== s && (s === "done" && done ? setSheet(true) : pick(s))}
             className={cn(
               "min-h-11 rounded-xl px-1 text-[13.5px] font-medium transition-colors sm:text-[14.5px]",
               shown === s ? cn(ON[s], "shadow-sm") : "text-ink-soft hover:bg-paper hover:text-ink",
@@ -90,6 +95,7 @@ export function StatusControl({
           {label.trim() || !customStatus ? "Set" : "Clear"}
         </SubmitButton>
       </form>
+      {done && <DoneSheet open={sheet} onOpenChange={setSheet} messages={done.messages} initialMessageId={done.initialMessageId} onDone={done.onDone} />}
     </div>
   );
 }
