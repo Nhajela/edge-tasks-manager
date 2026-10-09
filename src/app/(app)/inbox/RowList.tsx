@@ -1,13 +1,13 @@
 "use client";
 
-import { startTransition, useOptimistic } from "react";
+import { type ReactNode, startTransition, useOptimistic } from "react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Group } from "@/components/request/Group";
 import { RequestRow } from "@/components/request/RequestRow";
-import { Note } from "@/components/bits";
 import { CLOSED } from "@/lib/constants";
-import { toSections } from "@/lib/sections";
 import type { Status } from "@/lib/types";
+import { groupInbox, groupRaised } from "@/services/grouping";
 import type { ListItem } from "@/services/requests";
 import { setRowStatus } from "./actions";
 
@@ -16,25 +16,36 @@ type Change = { item: ListItem; status: Status; customStatus: string | null };
 const byNewest = (a: ListItem, b: ListItem) => +new Date(b.createdAt) - +new Date(a.createdAt) || b.id - a.id;
 
 /**
- * The rows, with a "Mark done" checkbox on requests assigned to me. Optimistic: the row updates (or leaves the Open
- * list) at once; the server action refreshes the page; a toast offers Undo, which puts the old status back.
+ * The rows, with a "Mark done" checkbox on requests assigned to me. Optimistic: the row updates (and, when grouped,
+ * moves bucket) at once; the server action refreshes the page; a toast offers Undo, which puts the old status back.
+ * `view` groups the rows with groupInbox / groupRaised (on the optimistic rows); without it, a plain list.
  */
 export function RowList({
   items,
   meId,
-  filter,
-  mode,
+  filter = "all",
+  view,
+  now: nowIso,
+  empty,
+  expand,
 }: {
   items: ListItem[];
   meId: number;
-  filter: "open" | "done" | "all";
-  /** group into SPEC status sections; omit for a plain list */
-  mode?: "inbox" | "raised";
+  /** plain list only: drop rows that no longer fit after a change */
+  filter?: "open" | "done" | "all";
+  view?: "inbox" | "raised";
+  /** the server's clock (ISO), so server and client group the same way */
+  now?: string;
+  /** grouped: shown when nothing is left outside the collapsed Done group ("You're all caught up") */
+  empty?: ReactNode;
+  /** grouped: open every group (a tile filter is on) */
+  expand?: boolean;
 }) {
+  const now = nowIso ? new Date(nowIso) : new Date();
   const [rows, apply] = useOptimistic(items, (rows: ListItem[], c: Change) => {
-    const next = { ...c.item, status: c.status, customStatus: c.customStatus };
+    const next = { ...c.item, status: c.status, customStatus: c.customStatus, doneAt: CLOSED.includes(c.status) ? new Date() : null };
     const others = rows.filter((r) => r.id !== c.item.id);
-    const fits = filter === "all" || (filter === "done") === CLOSED.includes(c.status);
+    const fits = view || filter === "all" || (filter === "done") === CLOSED.includes(c.status);
     return fits ? [...others, next].sort(byNewest) : others;
   });
 
@@ -55,59 +66,45 @@ export function RowList({
   }
 
   const anyCheck = rows.some((r) => r.assigneeId === meId);
-  const ul = (list: ListItem[]) => (
-    <ul className="divide-y divide-line-soft overflow-hidden rounded-[var(--radius-card)] border border-line-soft bg-paper">
-      {list.map((item) => {
-        const closed = CLOSED.includes(item.status);
-        const updated = +new Date(item.updatedAt);
-        const recent = mode === "raised" && Date.now() - updated < 86400_000 && updated - +new Date(item.createdAt) > 60_000;
-        return (
-          <RequestRow
-            key={item.id}
-            item={item}
-            meId={meId}
-            recent={recent}
-            check={
-              item.assigneeId !== meId ? (
-                anyCheck && <span aria-hidden className="block size-5" /> // keeps titles aligned in mixed lists
-              ) : (
-                <Checkbox
-                  checked={closed}
-                  onCheckedChange={(on) => change(item, on ? "done" : "open", null, item)}
-                  aria-label={closed ? `Reopen #${item.id}` : `Mark #${item.id} done`}
-                  className="size-5 rounded-md"
-                />
-              )
-            }
-          />
-        );
-      })}
-    </ul>
-  );
-  if (!mode) return ul(rows);
+  const row = (item: ListItem, bucket?: string) => {
+    const closed = CLOSED.includes(item.status);
+    return (
+      <RequestRow
+        key={item.id}
+        item={item}
+        meId={meId}
+        now={now}
+        bucket={bucket}
+        check={
+          item.assigneeId !== meId ? (
+            anyCheck && <span aria-hidden className="block size-5" /> // keeps titles aligned in mixed lists
+          ) : (
+            <Checkbox
+              checked={closed}
+              onCheckedChange={(on) => change(item, on ? "done" : "open", null, item)}
+              aria-label={closed ? `Reopen #${item.id}` : `Mark #${item.id} done`}
+              className="size-5 rounded-md"
+            />
+          )
+        }
+      />
+    );
+  };
 
-  const sections = toSections(rows, mode).filter((s) => s.items.length || filter !== "done");
+  if (!view)
+    return (
+      <ul className="divide-y divide-line-soft overflow-hidden rounded-[var(--radius-card)] border border-line-soft bg-paper">
+        {rows.map((r) => row(r))}
+      </ul>
+    );
+
+  const { groups } = view === "inbox" ? groupInbox(rows, now) : groupRaised(rows, now);
   return (
-    <div className="flex flex-col gap-5">
-      {sections.map((s) => {
-        const head = (
-          <>
-            {s.label} <span className="font-normal text-ink-mute">{s.items.length}</span>
-          </>
-        );
-        const body = s.items.length ? ul(s.items) : <Note>Nothing waiting on you 🎉</Note>;
-        return s.collapsed && filter !== "done" ? (
-          <details key={s.key} className="group">
-            <summary className="mb-2 cursor-pointer text-[15px] font-semibold">{head}</summary>
-            {body}
-          </details>
-        ) : (
-          <section key={s.key} aria-label={s.label}>
-            <h2 className="mb-2 text-[15px] font-semibold">{head}</h2>
-            {body}
-          </section>
-        );
-      })}
+    <div className="flex flex-col gap-6">
+      {groups.every((g) => g.collapsedByDefault && !expand) && empty}
+      {groups.map((g) => (
+        <Group key={g.key} title={g.title} count={g.count} collapsedByDefault={g.collapsedByDefault && !expand} rows={g.items.map((i) => row(i, g.key))} />
+      ))}
     </div>
   );
 }
