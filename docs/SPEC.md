@@ -121,8 +121,8 @@ Parsing rules (pure function in `src/lib/bot/parse.ts`, unit tested heavily):
   recent open request **raised by that message's author** in this chat in the last 24h (fallback: most recent open
   request they raised anywhere). `/append 12` → attach to #12 explicitly. If replying to the bot's own
   confirmation, `/append <text>` appends the text to that request. Bot confirms "Added to #12".
-- Also: if someone **replies to the bot's "Request #12 created" message** with plain text (no command), treat it as
-  an append to #12 (privacy mode delivers replies to the bot's messages).
+- A plain reply (no command) to the bot's "#12 created" message is a **thread** message, like any other reply in the
+  chain (see Reply threads). Only an explicit `/append` changes the request body.
 - Photos: message with photo + caption `/request @bob …` → attach photo. Replied-to photo → attach.
 - `/mine` — open requests assigned to me. `/raised` — open requests I raised. `/with @bob` — open requests between
   me and bob both ways ("checking in"). `/status 12` — one request's status. `/done 12` (assignee or requester
@@ -196,6 +196,8 @@ status command updates that request — no id needed:
   note, images/files (tap to open), "by @lucy · 2h ago", link to the Telegram message. Lists show a one-line
   "✅ <note snippet>" + 📎 count on done rows. The requester's done notification includes the note and the first image
   (sendPhoto when there is one). `get_request` over MCP returns `result` first.
+- In-thread status commands are stored as message kind `status` (not `thread`): rendered as an inline system line
+  ("✅ Ravi marked this done: 'projector fixed'"), excluded from thread counts, still valid reply targets for chains.
 - Reopening keeps the old result in the thread/history but clears the highlighted card.
 Keep it light: one card, no review/approval workflow.
 
