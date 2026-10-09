@@ -12,4 +12,5 @@ export function dbUrl(name: string): string {
 }
 
 export const TEMPLATE_DB = "etm_test_template";
-export const workerDbName = (poolId: string | number) => `etm_test_${poolId}`;
+/** Namespaced by run so parallel runs (other worktrees) sharing :5545 never drop each other's clones. */
+export const workerDbName = (runId: string | number, poolId: string | number) => `etm_test_${runId}_${poolId}`;
