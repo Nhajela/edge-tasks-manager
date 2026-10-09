@@ -122,6 +122,13 @@ async function r2Put(cfg: R2Config, key: string, body: Uint8Array, contentType: 
 
 // ---- serving ----
 
+/** Types a browser renders without running script. Everything else is served as a download. */
+const isInlineSafe = (mime: string) => {
+  const m = mime.split(";")[0].trim().toLowerCase();
+  if (m === "image/svg+xml") return false;
+  return /^(image|video|audio)\/[\w.+-]+$/.test(m) || m === "application/pdf" || m === "text/plain";
+};
+
 const DAY = 86400;
 const noStore = (body: string, status: number) => new Response(body, { status, headers: { "cache-control": "no-store" } });
 
@@ -163,10 +170,20 @@ export async function serveFile(
   }
   if (!upstream.ok || !upstream.body) return noStore("Upstream error", 502);
 
-  const contentType =
+  const claimed =
     file.mime || upstream.headers.get("content-type") || (file.kind === "photo" ? "image/jpeg" : "application/octet-stream");
-  const headers: Record<string, string> = { "content-type": contentType, "cache-control": cacheControl };
-  if (file.fileName) headers["content-disposition"] = `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`;
+  // mime is sender-controlled: anything that could run script (html, svg, xml...) downloads instead of rendering
+  const inline = isInlineSafe(claimed);
+  const contentType = inline ? claimed : "application/octet-stream";
+  const headers: Record<string, string> = {
+    "content-type": contentType,
+    "cache-control": cacheControl,
+    "x-content-type-options": "nosniff",
+  };
+  // defense in depth; skipped for PDF because Chrome's built-in viewer will not load inside a CSP sandbox
+  if (contentType !== "application/pdf") headers["content-security-policy"] = "sandbox";
+  const name = file.fileName ? `; filename*=UTF-8''${encodeURIComponent(file.fileName)}` : "";
+  if (name || !inline) headers["content-disposition"] = `${inline ? "inline" : "attachment"}${name}`;
 
   if (r2) {
     // ponytail: buffers the file (Telegram bot downloads cap at 20 MB) so one read feeds both R2 and the client

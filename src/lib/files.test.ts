@@ -112,6 +112,29 @@ describe("serveFile adapter selection", () => {
     ]);
   });
 
+  it("sends sender-controlled active types (html, svg) as an attachment, never inline", async () => {
+    for (const mime of ["text/html", "image/svg+xml"]) {
+      const doc = { ...file, kind: "document", mime, fileName: "x.html" } as Attachment;
+      const { f, calls } = fakeFetch((c) => (c.method === "PUT" ? new Response(null, { status: 200 }) : telegram(c)));
+      const res = await serveFile(doc, { fetch: f, env: { TELEGRAM_BOT_TOKEN: "TOKEN" } });
+      expect(res.headers.get("content-type")).toBe("application/octet-stream");
+      expect(res.headers.get("content-disposition")).toBe("attachment; filename*=UTF-8''x.html");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("content-security-policy")).toBe("sandbox");
+      // the R2 mirror must not store it as html either (public R2 domain would render it)
+      await serveFile(doc, { fetch: f, env: { ...R2_ENV, TELEGRAM_BOT_TOKEN: "TOKEN" } });
+      expect(calls.find((c) => c.method === "PUT")!.headers.get("content-type")).toBe("application/octet-stream");
+    }
+  });
+
+  it("keeps safe types inline with nosniff", async () => {
+    const { f } = fakeFetch(telegram);
+    const res = await serveFile({ ...file, mime: "application/pdf" } as Attachment, { fetch: f, env: { TELEGRAM_BOT_TOKEN: "TOKEN" } });
+    expect(res.headers.get("content-type")).toBe("application/pdf");
+    expect(res.headers.get("content-disposition")).toMatch(/^inline;/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
   it("uses the given max-age for expiring links", async () => {
     const { f } = fakeFetch(telegram);
     const res = await serveFile(file, { fetch: f, env: { TELEGRAM_BOT_TOKEN: "TOKEN" }, maxAge: 120 });
