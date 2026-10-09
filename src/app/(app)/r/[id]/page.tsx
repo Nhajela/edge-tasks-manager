@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { db } from "@/db";
 import { AiQuestionCard } from "@/components/request/AiQuestionCard";
 import { CommentBox } from "@/components/request/CommentBox";
+import { Delivered } from "@/components/request/Delivered";
+import { MarkDeliverableButton, type PickMessage } from "@/components/request/DoneSheet";
 import { DueEditor, LockedHint, PriorityEditor, TitleEditor } from "@/components/request/Editors";
 import { DueLabel } from "@/components/request/DueLabel";
 import { MessageCard } from "@/components/request/MessageCard";
@@ -15,8 +17,10 @@ import { formatDateTimeIST, istDayKey, relativeTime } from "@/lib/format";
 import { displayName } from "@/lib/names";
 import { requireViewer } from "@/lib/viewer";
 import { NotFoundError, PermissionError } from "@/services/errors";
+import { canManage } from "@/services/permissions";
 import * as requests from "@/services/requests";
-import { commentAction, setDueAction, setPriorityAction, setStatusAction, setTitleAction } from "./actions";
+import type { DetailMessage } from "@/services/requests";
+import { commentAction, doneAction, markDeliverableAction, setDueAction, setPriorityAction, setStatusAction, setTitleAction } from "./actions";
 
 export const metadata: Metadata = { title: "Request" };
 
@@ -49,6 +53,18 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
   const other = me.id === r.requesterId ? assignee : requester;
   const tellName = other.id === me.id ? null : displayName(other);
 
+  // the deliverable: any original/append/thread message (status commands are system lines, not deliverables)
+  const media = (m: DetailMessage) => attachments.filter((a) => a.chatId === m.chatId && a.messageId === m.messageId).length;
+  const picks: PickMessage[] = messages
+    .filter((m) => m.kind !== "status")
+    .map((m) => ({ id: m.id, name: displayName(m.from), snippet: m.text.replace(/\s+/g, " ").trim().slice(0, 80), media: media(m) }));
+  const manage = canManage(actor, r);
+  const star = manage
+    ? (m: DetailMessage) => (
+        <MarkDeliverableButton current={r.resultMessageId === m.id} done={r.status === "done"} onMark={markDeliverableAction.bind(null, id, m.id)} />
+      )
+    : undefined;
+
   return (
     <article className="flex flex-col gap-7">
       <header className="flex flex-col gap-2.5">
@@ -71,10 +87,24 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
         </p>
       </header>
 
+      <Delivered
+        request={r}
+        message={messages.find((m) => m.id === r.resultMessageId) ?? null}
+        attachments={attachments}
+        timeline={timeline}
+        assignee={assignee}
+      />
+
       <AiQuestionCard requestId={r.id} question={r.aiQuestion} canAnswer={actor.isAdmin} />
 
       <Section title="Status">
-        <StatusControl key={`${r.status}:${r.customStatus}`} status={r.status} customStatus={r.customStatus} onChange={setStatusAction.bind(null, id)} />
+        <StatusControl
+          key={`${r.status}:${r.customStatus}`}
+          status={r.status}
+          customStatus={r.customStatus}
+          onChange={setStatusAction.bind(null, id)}
+          done={{ messages: picks, initialMessageId: r.resultMessageId, onDone: doneAction.bind(null, id) }}
+        />
       </Section>
 
       <div className="grid gap-7 sm:grid-cols-2 sm:gap-5">
@@ -88,7 +118,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
 
       <Section title={original.length > 1 ? "Messages" : "Message"}>
         {original.length ? (
-          original.map((m) => <MessageCard key={m.id} message={m} attachments={attachments} />)
+          original.map((m) => <MessageCard key={m.id} message={m} attachments={attachments} action={star?.(m)} />)
         ) : (
           <p className="whitespace-pre-wrap break-words rounded-[var(--radius-card)] border border-line-soft p-3.5 text-[15px] leading-6">
             {r.body || "No message."}
@@ -97,13 +127,21 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
       </Section>
 
       {thread.length > 0 && (
-        <Section title={`Thread · ${thread.length}`}>
-          <Thread messages={thread} all={messages} attachments={attachments} botConfirmMessageId={r.botConfirmMessageId} />
+        <Section title={`Thread · ${thread.filter((m) => m.kind === "thread").length}`}>
+          <Thread
+            messages={thread}
+            all={messages}
+            attachments={attachments}
+            botConfirmMessageId={r.botConfirmMessageId}
+            timeline={timeline}
+            assignee={assignee}
+            action={star}
+          />
         </Section>
       )}
 
       <Section title="Activity">
-        <Timeline entries={timeline} />
+        <Timeline entries={timeline} assignee={assignee} />
       </Section>
 
       <Section title="Comment">

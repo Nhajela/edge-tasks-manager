@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { replyQuote } from "./Thread";
+import { replyQuote, statusLine } from "./Thread";
 
 const person = (id: number, username: string) => ({ id, username, firstName: username }) as never;
 const msg = (messageId: number, replyToMessageId: number | null, from: ReturnType<typeof person> | null, text: string) =>
@@ -25,5 +25,37 @@ describe("replyQuote", () => {
     expect(replyQuote(msg(201, 200, ben, "ok"), [long], null)?.snippet).toHaveLength(81);
     expect(replyQuote(msg(202, null, ben, "hi"), all, 100)).toBeNull();
     expect(replyQuote(msg(203, 999, ben, "hi"), all, 100)).toBeNull();
+  });
+});
+
+describe("statusLine", () => {
+  const ravi = person(5, "ravi");
+  const lucy = person(6, "lucy");
+  const naman = person(7, "naman");
+  const cmd = (messageId: number, from: unknown, text: string) => ({ messageId, from, text }) as never;
+  const row = (data: Record<string, unknown>) => ({ action: "request.status", data }) as never;
+
+  it("reads the status audit row recorded for that command", () => {
+    const tl = [row({ to: "done", note: "projector fixed", messageId: 301 })];
+    expect(statusLine(cmd(301, ravi, "/done projector fixed"), tl, ravi)).toBe("✅ @ravi marked this done: “projector fixed”");
+  });
+
+  it("says on whose behalf someone else closed it", () => {
+    const tl = [row({ to: "done", note: null, messageId: 302, onBehalfOf: 6 })];
+    expect(statusLine(cmd(302, naman, "/done"), tl, lucy)).toBe("✅ @naman marked this done on behalf of @lucy");
+  });
+
+  it("words the other statuses and the custom label", () => {
+    expect(statusLine(cmd(303, ravi, "/waiting vendor"), [row({ to: "waiting", customStatus: "vendor", messageId: 303 })], ravi)).toBe(
+      "⏳ @ravi set it to Waiting (“vendor”)",
+    );
+    expect(statusLine(cmd(304, ravi, "/reopen"), [row({ to: "open", messageId: 304 })], ravi)).toBe("↩️ @ravi reopened this");
+    expect(statusLine(cmd(305, ravi, "/decline no budget"), [row({ to: "declined", note: "no budget", messageId: 305 })], ravi)).toBe(
+      "🚫 @ravi declined this: “no budget”",
+    );
+  });
+
+  it("falls back to the command text when no audit row matches", () => {
+    expect(statusLine(cmd(306, ravi, "/done 12"), [], ravi)).toBe("@ravi: /done 12");
   });
 });

@@ -30,6 +30,16 @@ export async function setStatusAction(id: number, status: Status, customStatus?:
   return run(id, (a) => requests.setStatus(db(), a, id, { status, customStatus }));
 }
 
+/** Done from the "What was delivered?" sheet. The note is the status note (timeline, notification) and the result note. */
+export async function doneAction(id: number, result: { note: string | null; messageId: number | null }): Promise<ActionResult> {
+  return run(id, (a) => requests.setStatus(db(), a, id, { status: "done", note: result.note, result: { messageId: result.messageId } }));
+}
+
+/** ⭐ messageId is a request_messages.id of this request. */
+export async function markDeliverableAction(id: number, messageId: number): Promise<ActionResult> {
+  return run(id, (a) => requests.markDeliverable(db(), a, id, messageId));
+}
+
 export async function setTitleAction(id: number, title: string): Promise<ActionResult> {
   return run(id, (a) => requests.setTitle(db(), a, id, title));
 }
