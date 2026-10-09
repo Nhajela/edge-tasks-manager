@@ -13,7 +13,6 @@ import type { Person } from "@/lib/types";
 
 // after() needs a Next request scope; run its callback inline so the route test sees effects scheduled
 vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: (fn: () => unknown) => void fn() }));
-vi.mock("@/services/grouping", async (orig) => (await import("@tests/helpers/grouping")).withGroupingFallback(orig));
 vi.mock("@/lib/effects", () => ({ runEffects: vi.fn(async () => {}) }));
 
 const db = testDb();

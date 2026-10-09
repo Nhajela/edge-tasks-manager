@@ -14,7 +14,6 @@ import type { Effect } from "@/services/types";
 import { handleIntent } from "../handlers";
 import type { Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from "../types";
 
-vi.mock("@/services/grouping", async (orig) => (await import("@tests/helpers/grouping")).withGroupingFallback(orig));
 
 const db = testDb();
 const NOW = new Date("2026-10-12T06:00:00Z"); // 11:30 IST
