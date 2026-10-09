@@ -171,11 +171,33 @@ status command updates that request — no id needed:
 - Plain "done" without the command or bot mention is just a thread message (people say "done" in conversation), but if
   the **assignee** writes exactly "done"/"done ✅"/"✅" as a reply in the thread, the bot replies with a one-tap
   "Mark #12 done?" button (assignee only) instead of guessing.
-- Who may change status: assignee, requester, or admin. Anyone else gets a short "Only @assignee or @requester can
+- Who may change status: assignee, requester, or admin (see "Closing on someone's behalf"). Anyone else gets a short "Only @assignee or @requester can
   close #12" reply; their message still lands in the thread.
 - If a reply's chain resolves to no request, `/done` with no id answers "Reply to a request message, or use /done <id>".
 - The status change is one service call (`setStatus` with the note) → one audit row; the thread shows it inline as a
   system line ("✅ Ravi marked this done: 'projector fixed'").
+
+### Closing on someone's behalf + the deliverable
+- **Who can close**: the assignee, the **requester** and admins (superadmin) can all mark a request done/declined —
+  e.g. Lucy delivered but didn't close it, so the requester closes it for her. When someone other than the assignee
+  closes it, the thread line and audit row say "closed by Naman on behalf of @lucy", and the **assignee** is the one
+  informed (not the requester, who did it).
+- **Deliverable (the "result")**: a done carries an optional result = note + attachments + the message it points to.
+  Stored on the request as `result_note`, `result_message_id` (→ request_messages), `result_by`, `result_at`; result
+  attachments are ordinary attachments linked to that message. Sources:
+  - Telegram `/done <note>` (or `@bot done <note>`): note = text after the command; if the `/done` message itself has a
+    photo/document, or it **replies to a message with a photo/document/link**, that message becomes the result message
+    and its media the deliverable.
+  - Web: the Done control opens a small sheet "What was delivered? (optional)" with a note field and "Use a message from
+    the thread" picker; every thread/original message also gets a "⭐ Mark as deliverable" action (assignee/requester/
+    admin). No web upload (no storage yet); files come from Telegram. When R2 lands, upload can be added.
+  - MCP `update_status` accepts `result_note` and `result_message_id`.
+- **Shown first**: on `/r/[id]` a highlighted "✅ Delivered" card sits at the very top (above the original message):
+  note, images/files (tap to open), "by @lucy · 2h ago", link to the Telegram message. Lists show a one-line
+  "✅ <note snippet>" + 📎 count on done rows. The requester's done notification includes the note and the first image
+  (sendPhoto when there is one). `get_request` over MCP returns `result` first.
+- Reopening keeps the old result in the thread/history but clears the highlighted card.
+Keep it light: one card, no review/approval workflow.
 
 ## Notifications (`src/lib/notify.ts`)
 On status change / comment / done by the assignee: DM the requester if `started_bot`; otherwise reply in the
