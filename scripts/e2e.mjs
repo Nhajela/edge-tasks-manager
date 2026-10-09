@@ -287,11 +287,11 @@ try {
     assert(where("generator before the beach party") > at.New && where("generator before the beach party") < at.Act, "unseen item not in New");
   });
 
-  await step("web: /raised (@asha) tiles Overdue, Open, In progress, Waiting, Done this week, then sections", async () => {
+  await step("web: /raised (@asha) tiles Overdue, Open, Doing, Waiting, Done this week, then sections", async () => {
     await asha.page.goto(`${BASE}/raised`);
     await asha.page.getByText("Done this week").first().waitFor();
     const text = await asha.page.locator("main").innerText();
-    const tiles = linesInOrder(text, ["Overdue", "Open", "In progress", "Waiting", "Done this week"]);
+    const tiles = linesInOrder(text, ["Overdue", "Open", "Doing", "Waiting", "Done this week"]);
     const after = text.split("\n").slice(tiles.end).join("\n");
     linesInOrder(after, ["Overdue", "Active", "Waiting", "Recently done"]);
     assert(after.toLowerCase().includes("vegan options"), "overdue seeded request missing");
@@ -377,10 +377,11 @@ try {
         ["inbox", "ben", "/inbox"],
         ["raised", "asha", "/raised"],
         ["detail-delivered", "asha", `/r/${behalf.id}`],
-        ["detail-with-thread", "ben", `/r/${tap.id}`],
+        ["detail-thread", "ben", `/r/${tap.id}`],
+        ["with", "asha", "/with/ben"],
+        ["admin", String(ADMIN.id), "/admin"],
         ["settings", "ben", "/settings"],
         ["context", String(ADMIN.id), "/context"],
-        ["admin-activity", String(ADMIN.id), "/admin/activity"],
       ];
       for (const width of [390, 1280]) {
         const sessions = {};

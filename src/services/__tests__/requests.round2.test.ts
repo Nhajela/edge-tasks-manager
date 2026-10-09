@@ -132,3 +132,71 @@ describe("lists carry what grouping needs", () => {
     expect(recent.items.map((i) => i.id)).toEqual([open.request.id]);
   });
 });
+
+describe("round 2 verify 1", () => {
+  it("a ⭐ chosen while open survives a done without its own result; picking None (messageId: null) clears it", async () => {
+    const requester = await makePerson(db, { startedBot: true });
+    const { request, assignee } = await makeRequest(db, { requester });
+    const [orig] = (await requests.getDetail(db, systemActor(), request.id)).messages;
+    const starred = await requests.markDeliverable(db, actorFor(requester), request.id, orig.id);
+    const done = await requests.setStatus(db, actorFor(assignee), request.id, { status: "done" });
+    expect(done.request).toMatchObject({ resultMessageId: orig.id, resultById: requester.id, resultAt: starred.request.resultAt });
+    // a /done with only a note keeps the starred message too
+    const r2 = await makeRequest(db, { requester, assignee });
+    const [o2] = (await requests.getDetail(db, systemActor(), r2.request.id)).messages;
+    await requests.markDeliverable(db, actorFor(assignee), r2.request.id, o2.id);
+    const noted = await requests.setStatus(db, actorFor(assignee), r2.request.id, { status: "done", note: "sent" });
+    expect(noted.request).toMatchObject({ resultMessageId: o2.id, resultNote: "sent" });
+    // the Done sheet's explicit "None"
+    const r3 = await makeRequest(db, { requester, assignee });
+    const [o3] = (await requests.getDetail(db, systemActor(), r3.request.id)).messages;
+    await requests.markDeliverable(db, actorFor(assignee), r3.request.id, o3.id);
+    const none = await requests.setStatus(db, actorFor(assignee), r3.request.id, { status: "done", result: { messageId: null } });
+    expect(none.request.resultMessageId).toBeNull();
+  });
+
+  it("onBehalfOf only for closing by another person, not reopen/waiting or system actors", async () => {
+    const { request, requester, assignee } = await makeRequest(db);
+    await requests.setStatus(db, actorFor(requester), request.id, { status: "waiting", note: "need quote" });
+    await requests.setStatus(db, systemActor(), request.id, { status: "in_progress" });
+    await requests.setStatus(db, actorFor(requester), request.id, { status: "done" });
+    await requests.setStatus(db, actorFor(requester), request.id, { status: "open" });
+    const rows = (await requests.getDetail(db, systemActor(), request.id)).timeline.filter((t) => t.action === "request.status");
+    expect(rows.map((t) => t.data?.onBehalfOf ?? null)).toEqual([null, null, assignee.id, null]);
+  });
+
+  it("a request the assignee raised for themselves is already seen", async () => {
+    const asha = await makePerson(db);
+    const ravi = await makePerson(db);
+    const { request } = await makeRequest(db, { requester: asha, assignee: ravi, by: ravi });
+    expect(request.assigneeSeenAt).toBeInstanceOf(Date);
+    const other = await makeRequest(db, { requester: asha, assignee: ravi });
+    expect(other.request.assigneeSeenAt).toBeNull();
+  });
+
+  it("no group fallback into a private chat (request raised in a DM)", async () => {
+    const requester = await makePerson(db, { startedBot: true });
+    const { request } = await makeRequest(db, { requester, chatId: Number(requester.telegramId) });
+    const res = await requests.setStatus(db, actorFor(requester), request.id, { status: "done" });
+    expect(notes(res.effects)).toEqual([]);
+  });
+
+  it("the group fallback for a done carries no photo and no note (the deliverable may have been sent privately)", async () => {
+    const { request, assignee } = await makeRequest(db);
+    const res = await requests.setStatus(db, actorFor(assignee, { via: "telegram" }), request.id, {
+      status: "done",
+      note: "here's the invoice",
+      message: {
+        chatId: 9100000071,
+        messageId: 902,
+        fromId: assignee.id,
+        text: "/done here's the invoice",
+        attachments: [{ messageId: 902, telegramFileId: "FILE_B", telegramFileUniqueId: "UB", kind: "photo" }],
+      },
+    });
+    const [n] = notes(res.effects);
+    expect(n).toMatchObject({ kind: "group_fallback", chatId: request.chatId });
+    expect(n).not.toHaveProperty("photo");
+    expect(n.html).not.toContain("invoice");
+  });
+});

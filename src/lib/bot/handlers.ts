@@ -362,7 +362,9 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
   const before = await requests.getById(c.db, viaThread ? systemActor() : actor, requestId);
   // SPEC deliverable: the /done's own media (setStatus picks it), else the replied-to message's photo/document/link
   const resultMessageId =
-    i.status === "done" && !i.attachments.length && i.replyToMessageId != null ? await repliedDeliverable(c, requestId, i.chat.id, i.replyToMessageId) : null;
+    i.status === "done" && !i.attachments.length && i.replyToMessageId != null
+      ? ((await repliedDeliverable(c, requestId, i.chat.id, i.replyToMessageId)) ?? (i.requestId != null ? await storeReplied(c, actor, requestId, i) : null))
+      : null;
   const newResult = resultMessageId != null && resultMessageId !== before.resultMessageId;
   if (before.status === i.status && !note && !i.attachments.length && !newResult) {
     // a second "/done" (or a redelivery): no second status row or ping, same as the DM buttons
@@ -392,6 +394,28 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
     await reply(c, i, copy.cantChange(before, await people.getById(c.db, before.requesterId), await people.getById(c.db, before.assigneeId)), { requestId });
     return result("status.forbidden", requestId);
   }
+}
+
+/**
+ * "/done 12 <note>" replying to a photo/document/link message that belongs to no request yet: store it in #12's thread
+ * (its own audit row) and return its request_messages.id, so it becomes the deliverable.
+ */
+async function storeReplied(c: Ctx, actor: Actor, requestId: number, i: Extract<Intent, { kind: "status" }>) {
+  const r = i.replied?.message;
+  if (!r?.from || !(i.replied!.attachments.length || /https?:\/\/\S/i.test(textOf(r)))) return null;
+  if ((await requests.findRequestByTelegramMessage(c.db, i.chat.id, r.message_id)) != null) return null;
+  const { person: author } = await actorFromTelegram(c.db, r.from);
+  await requests.addThreadMessage(c.db, actor, {
+    requestId,
+    chatId: i.chat.id,
+    messageId: r.message_id,
+    replyToMessageId: r.reply_to_message?.message_id ?? null,
+    fromId: author.id,
+    text: textOf(r),
+    link: messageLink(i.chat, r.message_id),
+    attachments: i.replied!.attachments,
+  });
+  return repliedDeliverable(c, requestId, i.chat.id, r.message_id);
 }
 
 /** request_messages.id of a conversation message (not the request itself) with a photo/document/link, else null. */

@@ -226,6 +226,16 @@ describe("mcp server", () => {
     expect(log.slice(1).every((l) => l.via === "mcp")).toBe(true);
   });
 
+  it("update_status records result_note and result_message_id (a request_messages id from get_request)", async () => {
+    const me = await makePerson(db);
+    const { request } = await makeRequest(db, { assignee: me });
+    const [orig] = (await call(me, "get_request", { id: request.id })).data.messages;
+    expect(orig.id).toEqual(expect.any(Number));
+    const res = await call(me, "update_status", { id: request.id, status: "done", result_note: "invoice sent", result_message_id: orig.id });
+    expect(res.data).toMatchObject({ status: "done", resultNote: "invoice sent" });
+    expect((await requests.getById(db, actorFor(me), request.id)).resultMessageId).toBe(orig.id);
+  });
+
   it("update_status rejects an unknown status before calling the service", async () => {
     const me = await makePerson(db);
     const { request } = await makeRequest(db, { assignee: me });

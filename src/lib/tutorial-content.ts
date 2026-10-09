@@ -54,7 +54,7 @@ export const STEPS: Step[] = [
     chat: [
       { from: "them", name: "Asha", text: "can someone grab chairs for the talk?" },
       { from: "you", reply: "can someone grab chairs for the talk?", text: "/request" },
-      { from: "bot", name: "Edge Tasks", text: "📝 #13 for you: Grab chairs for the talk" },
+      { from: "bot", name: "Edge Tasks", text: "📝 #13 for @you: Grab chairs for the talk" },
     ],
   },
   {
@@ -105,7 +105,7 @@ export const STEPS: Step[] = [
     body: "Log in with Telegram. To me sorts what people asked of you into New, Act, Upcoming, Waiting and Done. I asked shows what you asked of others: Overdue first, then Active, Waiting, Recently done, and who has your requests. The two are never mixed. In Telegram, /mine and /raised do the same.",
     chat: [
       { from: "you", text: "/mine" },
-      { from: "bot", name: "Edge Tasks", text: "For you (1)\n#13 Grab chairs for the talk — Open · due today" },
+      { from: "bot", name: "Edge Tasks", text: "For you (1 open)\n\nAct (1)\n#13 Grab chairs for the talk — Open · due today" },
     ],
   },
   {
@@ -215,7 +215,7 @@ export const WORD_ENTRIES: Entry[] = [
   { term: "Doing", meaning: "Status: the assignee is on it." },
   { term: "Waiting", meaning: "Status: blocked on someone or something. The custom label says what." },
   { term: "Done", meaning: "Status: finished." },
-  { term: "Declined", meaning: "Status: the assignee said no." },
+  { term: "Declined", meaning: "Status: won't be done. Usually the assignee said no; the requester or an admin can also decline it." },
   {
     term: "Custom label",
     meaning: "Free text shown instead of the status name, like “ordering from Panjim”. /waiting <reason> sets one; the status underneath stays.",
@@ -249,7 +249,7 @@ export const WORD_ENTRIES: Entry[] = [
   { term: "Done (bucket)", meaning: "Done or declined in the last 14 days, collapsed by default." },
   {
     term: "I asked tiles",
-    meaning: "Counts at the top of I asked: Overdue (the only red one), Open, In progress, Waiting, Done this week. Tap one to filter the list.",
+    meaning: "Counts at the top of I asked: Overdue (the only red one), Open, Doing, Waiting, Done this week. Tap one to filter the list.",
   },
   {
     term: "I asked sections",

@@ -101,7 +101,7 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
 
       <Section title="Status">
         <StatusControl
-          key={`${r.status}:${r.customStatus}`}
+          key={`${r.status}:${r.customStatus}:${r.resultMessageId}`}
           status={r.status}
           customStatus={r.customStatus}
           onChange={setStatusAction.bind(null, id)}

@@ -8,12 +8,15 @@ import { fileHref } from "./MessageCard";
 type Entry = Pick<AuditEntry, "action" | "actorLabel" | "data">;
 const data = (e: Entry) => (e.data ?? {}) as { to?: string; result?: unknown; onBehalfOf?: number };
 
-/** Who recorded the current result (the last done-with-result or ⭐), and who closed it when not the assignee. */
-export function deliveredInfo(timeline: Entry[]): { by: string; closedBy: string | null } {
+/**
+ * Who delivered: the result message's author when there is one, else who recorded the result (the last done-with-result
+ * or ⭐). Plus who closed it when not the assignee.
+ */
+export function deliveredInfo(timeline: Entry[], messageAuthor?: string): { by: string; closedBy: string | null } {
   const rev = [...timeline].reverse();
   const by = rev.find((e) => e.action === "request.deliverable" || (e.action === "request.status" && data(e).result));
   const done = rev.find((e) => e.action === "request.status" && data(e).to === "done");
-  return { by: by?.actorLabel ?? "someone", closedBy: done && data(done).onBehalfOf != null ? done.actorLabel : null };
+  return { by: messageAuthor ?? by?.actorLabel ?? "someone", closedBy: done && data(done).onBehalfOf != null ? done.actorLabel : null };
 }
 
 /** The highlighted "✅ Delivered" card at the top of a done request: note, media, who and when, Telegram link. */
@@ -31,7 +34,7 @@ export function Delivered({
   assignee: Person;
 }) {
   if (r.status !== "done" || (!r.resultNote && !message)) return null;
-  const { by, closedBy } = deliveredInfo(timeline);
+  const { by, closedBy } = deliveredInfo(timeline, message?.from ? displayName(message.from) : undefined);
   const files = message ? attachments.filter((a) => a.chatId === message.chatId && a.messageId === message.messageId) : [];
   const at = r.resultAt ?? r.doneAt;
   return (

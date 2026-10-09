@@ -159,3 +159,29 @@ Unresolved:
 - The ⭐ deliverable is cleared if someone picks "None" in the Done sheet.
 - Seeded photos use fake Telegram file ids, so they show as blank boxes in dev.
 - `/with` has no e2e check; it was checked by build only.
+
+## Round 2 verify 1 (2026-10-09)
+
+Review findings checked one by one. Each real one got a failing test first, then the fix.
+
+| # | Finding | Outcome |
+|---|---------|---------|
+| 1, 11 | A ⭐ starred while open was wiped by any done without its own result (DM ✅ button, inbox checkbox, `/done`, `/done <note>`) | Fixed in `setStatus`: when no message is given (`result.messageId` undefined) the current ⭐ is kept, along with its `resultById`/`resultAt`. An explicit `messageId: null` (the Done sheet's "None") still clears it. The done notification now carries the kept photo |
+| 2 | MCP `update_status` had no `result_note` / `result_message_id` | Added both. `get_request` messages now include `id`, which is the value `result_message_id` takes |
+| 3, 9 | "On behalf of" was recorded for every status change by a non-assignee, and for system actors | `onBehalfOf` is now set only when someone else (a real person) closes it (done/declined). Older audit rows are left as they are |
+| 4 | `/done 12 <note>` sent as a reply to a photo/link message not yet on the request dropped the deliverable | The status intent now carries the replied message (`replied`). `onStatus` stores it in #12's thread (its own audit row) and makes it the result |
+| 5 | Bot `/with` hid the second block when the first used up all 10 lines | `grouped()` shares the line budget: each block gets a fair share, and lines a block can't use pass to the next |
+| 6 | The Delivered "by" named who recorded the result, not who delivered it | "by" is the author of the result message, and falls back to the recorder for a note-only result. MCP `result.by` does the same |
+| 7 | Requests the assignee raised themselves landed in "New" | `create` sets `assigneeSeenAt` when the actor is the assignee |
+| 8 | The group fallback for a DM-raised request went to the requester's private chat | The fallback only goes to a group (`chatId < 0`) |
+| 10 | The group fallback posted the deliverable photo and notes into the group | The fallback sends only the status line, the on-behalf line and the Open button |
+| 12 | The Done sheet kept a stale "None" after a ⭐ | The `StatusControl` key now includes `resultMessageId` |
+| 13 | The tile said "In progress" while the status is "Doing" | The tile, the glossary, SPEC and e2e now all say "Doing" |
+| 14 | "Done this week": the tile count and the filter used different rules | One exported `tileMatches` in `grouping.ts` is used for both |
+| 15 | The tutorial's bot bubbles didn't match the real replies | `📝 #13 for @you: …` and `For you (1 open)` / `Act (1)` |
+| 16 | The selected Done-sheet option was clipped ("asha:") | The radio is now `size-4 shrink-0` and the label has `pl-0.5` (no new screenshot of the sheet yet) |
+| 17 | The glossary said Declined meant "the assignee said no" | Reworded: the requester or an admin can also decline |
+
+Checks: tsc clean, lint clean, `pnpm test` 365 tests in 9.7s, `pnpm build` passes (26s), `SHOTS=1 pnpm e2e` passed in 79.4s (screenshots took 46s of that). Final screenshots in `docs/screenshots/final/` at 390 and 1280: landing, inbox, raised, detail-delivered, detail-thread, with, admin, settings, context. `detail-with-thread` and `admin-activity` were replaced. Git history scanned for secrets: none found.
+
+Still open: the Done-sheet clipping fix is checked by build only, with no fresh screenshot. Older audit rows can still say "on behalf of" for a reopen.

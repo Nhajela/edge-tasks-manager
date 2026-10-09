@@ -19,6 +19,11 @@ describe("deliveredInfo", () => {
     expect(deliveredInfo(tl)).toEqual({ by: "@asha", closedBy: null });
   });
 
+  it("with a result message, 'by' is its author (who delivered), not who closed or starred it", () => {
+    const tl = [e("request.status", "@naman", { to: "done", onBehalfOf: 6, result: { note: null, messageId: 9 } })];
+    expect(deliveredInfo(tl, "@lucy")).toEqual({ by: "@lucy", closedBy: "@naman" });
+  });
+
   it("falls back when nothing recorded a result", () => {
     expect(deliveredInfo([])).toEqual({ by: "someone", closedBy: null });
   });

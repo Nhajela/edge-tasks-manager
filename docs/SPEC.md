@@ -239,7 +239,7 @@ item is there, in a **fixed order** (never sorted by count). Grouping is a pure,
 - `/inbox` (To me): **New** (open, assignee hasn't opened it yet — track `assignee_seen_at`), **Act** (open/doing, due
   overdue/today/tomorrow or undated), **Upcoming** (open/doing, due after tomorrow), **Waiting** (waiting; custom label is
   the reason), **Done** (done/declined in last 14 days, collapsed by default).
-- `/raised` (I asked): stat tiles first in fixed order — **Overdue** (only red one), **Open**, **In progress**,
+- `/raised` (I asked): stat tiles first in fixed order — **Overdue** (only red one), **Open**, **Doing** (in_progress, same word as the status),
   **Waiting**, **Done this week**; tapping a tile filters the list. Then sections **Overdue**, **Active**, **Waiting**,
   **Recently done** (collapsed), and a **People** strip: who has your requests, people with overdue/waiting items first,
   on-track people behind "Show N more".

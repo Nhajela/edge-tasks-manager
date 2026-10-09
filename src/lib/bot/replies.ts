@@ -47,15 +47,20 @@ export type Block = { heading: string; total: number; sections: Section[] };
 export function grouped(blocks: Block[], now: Date, empty: string, max: number) {
   let left = max;
   const out: string[] = [];
-  for (const b of blocks) {
+  const need = (b: Block) => b.sections.reduce((n, s) => n + s.items.length, 0);
+  blocks.forEach((b, k) => {
+    // a fair share of what's left, plus whatever later blocks can't use, so a full first block never hides the second
+    const laterNeed = blocks.slice(k + 1).reduce((n, x) => n + need(x), 0);
+    let budget = Math.min(left, Math.max(Math.ceil(left / (blocks.length - k)), left - laterNeed));
     const parts: string[] = [];
     for (const s of b.sections) {
-      const shown = s.items.slice(0, left);
+      const shown = s.items.slice(0, budget);
+      budget -= shown.length;
       left -= shown.length;
       if (shown.length) parts.push(`<b>${esc(s.title)}</b> (${s.count})\n${shown.map((r) => line(r, now)).join("\n")}`);
     }
     if (parts.length) out.push([`<b>${esc(b.heading)}</b> (${b.total} open)`, ...parts].join("\n\n"));
-  }
+  });
   if (!out.length) return empty;
   const more = blocks.reduce((n, b) => n + b.total, 0) - (max - left);
   return out.join("\n\n") + (more > 0 ? `\n\n…and ${more} more on the dashboard` : "");

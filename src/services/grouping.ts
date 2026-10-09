@@ -6,7 +6,7 @@
  * Shared rules: buckets in the fixed order below (never by count); empty buckets are omitted; inside every bucket sort by
  * priority (urgent→low), then due ascending (undated last), then oldest first.
  */
-import { PRIORITIES } from "@/lib/constants";
+import { PRIORITIES, STATUS_LABEL } from "@/lib/constants";
 import { istDayKey } from "@/lib/format";
 import type { Person } from "@/lib/types";
 import type { ListItem } from "./requests";
@@ -93,10 +93,18 @@ const RAISED_TITLES: Record<RaisedBucket, string> = { overdue: "Overdue", active
 const TILE_TITLES: Record<RaisedTileKey, string> = {
   overdue: "Overdue",
   open: "Open",
-  in_progress: "In progress",
+  in_progress: STATUS_LABEL.in_progress,
   waiting: "Waiting",
   done_this_week: "Done this week",
 };
+
+/** Which items a raised tile counts; the tapped-tile filter uses the same test, so count and list always agree. */
+export function tileMatches(key: RaisedTileKey, i: ListItem, now: Date): boolean {
+  if (key === "overdue") return isOverdue(i, now);
+  // "this week" = today and the 6 IST days before it (rolling, not Monday-based)
+  if (key === "done_this_week") return i.status === "done" && !!i.doneAt && istDays(i.doneAt, now) >= -6;
+  return i.status === key;
+}
 
 /**
  * /raised (I asked) buckets, plus `tiles` (always all five, fixed order) and `people` (assignees of open items).
@@ -109,18 +117,10 @@ export function groupRaised(items: ListItem[], now: Date): Required<Grouped<Rais
     if (isOverdue(i, now)) return "overdue";
     return i.status === "waiting" ? "waiting" : "active";
   };
-  // "this week" = today and the 6 IST days before it (rolling, not Monday-based)
-  const tileTest: Record<RaisedTileKey, (i: ListItem) => boolean> = {
-    overdue: (i) => isOverdue(i, now),
-    open: (i) => i.status === "open",
-    in_progress: (i) => i.status === "in_progress",
-    waiting: (i) => i.status === "waiting",
-    done_this_week: (i) => i.status === "done" && !!i.doneAt && istDays(i.doneAt, now) >= -6,
-  };
   const tiles = RAISED_TILES.map((key) => ({
     key,
     title: TILE_TITLES[key],
-    count: items.filter(tileTest[key]).length,
+    count: items.filter((i) => tileMatches(key, i, now)).length,
     danger: key === "overdue",
   }));
 

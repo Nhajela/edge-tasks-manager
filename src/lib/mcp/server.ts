@@ -58,6 +58,7 @@ const summary = (r: Request & Partial<Pick<requests.ListItem, "requester" | "ass
 });
 
 const message = (m: requests.DetailMessage) => ({
+  id: m.id,
   kind: m.kind,
   from: ref(m.from),
   text: m.text,
@@ -194,7 +195,7 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
         result: r.resultAt
           ? {
               note: r.resultNote,
-              by: ref(by),
+              by: ref(msg?.from ?? by), // who delivered: the result message's author, else who recorded it
               at: r.resultAt.toISOString(),
               message: msg && message(msg),
               attachments: msg?.messageId != null ? d.attachments.filter((f) => f.chatId === msg.chatId && f.messageId === msg.messageId).map(file) : [],
@@ -249,12 +250,19 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
     {
       title: "Update status",
       description:
-        "Set a request's status: open, in_progress, waiting (blocked on someone), done, declined. Optional custom_label shows instead of the status name; optional note explains the change. Done/declined notify the requester on Telegram.",
+        "Set a request's status: open, in_progress, waiting (blocked on someone), done, declined. Optional custom_label shows instead of the status name; optional note explains the change; for done, result_note / result_message_id record the deliverable. Done/declined notify the requester on Telegram.",
       inputSchema: z.object({
         id,
         status: z.enum(STATUSES as [string, ...string[]]),
         custom_label: z.string().nullable().optional().describe("Free label, e.g. 'ordering from Panjim'. null or empty clears it."),
         note: z.string().optional().describe("Why, shown in the timeline and the notification."),
+        result_note: z.string().optional().describe("Done only: what was delivered (otherwise note is used)."),
+        result_message_id: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Done only: the message that holds the deliverable, a messages[].id from get_request."),
       }),
       annotations: WRITE,
     },
@@ -264,6 +272,7 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
           status: a.status as (typeof STATUSES)[number],
           customStatus: a.custom_label,
           note: a.note,
+          ...(a.result_note != null || a.result_message_id != null ? { result: { note: a.result_note, messageId: a.result_message_id } } : {}),
         }),
       ),
     ),

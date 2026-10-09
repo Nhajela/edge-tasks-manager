@@ -166,6 +166,8 @@ export async function create(db: DbClient, actor: Actor, input: CreateInput): Pr
       requesterId: input.requesterId,
       assigneeId: input.assigneeId,
       createdById: actor.personId ?? input.requesterId,
+      // the assignee raised it themselves: they know about it, so it is not "New"
+      assigneeSeenAt: actor.personId != null && actor.personId === input.assigneeId ? new Date() : null,
       chatId: input.chatId ?? null,
       chatTitle: input.chatTitle ?? null,
       sourceMessageId: input.sourceMessageId ?? messages[0]?.messageId ?? null,
@@ -418,11 +420,17 @@ export async function setStatus(db: DbClient, actor: Actor, id: number, input: S
         .where(and(eq(requestMessages.chatId, msg.chatId), eq(requestMessages.messageId, msg.messageId)));
       rMsgId = row?.id ?? null;
     }
+    // a ⭐ already chosen stays unless the closer explicitly picked "None" (messageId: null)
+    if (rMsgId == null && input.result?.messageId === undefined) rMsgId = before.resultMessageId ?? null;
     if (rNote || rMsgId != null) result = { note: rNote, messageId: rMsgId };
     if (rMsgId != null) photo = await firstPhoto(db, id, await requireOwnMessage(db, id, rMsgId));
   }
-  // a repeat done without a new result keeps the one already there
-  const keepResult = input.status === "done" && before.status === "done" && !result;
+  // a done with nothing new (repeat done, or the ⭐ carried over) keeps the result columns already there
+  const keepResult =
+    input.status === "done" &&
+    !result?.note &&
+    (result?.messageId ?? null) === (before.resultMessageId ?? null) &&
+    (before.status === "done" || before.resultMessageId != null);
   const now = new Date();
   const [request] = await db
     .update(requests)
@@ -442,7 +450,7 @@ export async function setStatus(db: DbClient, actor: Actor, id: number, input: S
     })
     .where(eq(requests.id, id))
     .returning();
-  const onBehalfOf = actor.personId !== before.assigneeId ? before.assigneeId : undefined;
+  const onBehalfOf = closed && actor.personId != null && actor.personId !== before.assigneeId ? before.assigneeId : undefined;
   await audit.record(db, actor, {
     action: "request.status",
     entityType: "request",

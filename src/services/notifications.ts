@@ -3,7 +3,7 @@
  * (src/lib/telegram.ts telegramNotifier in prod, a capturing notifier in tests). Rules (SPEC "Notifications"):
  * - assigned: DM the assignee if they started the bot.
  * - status/comment: tell the other side (requester acts → assignee, anyone else → requester); DM if possible,
- *   else reply in the original group thread, but only for done/declined and comments marked notify.
+ *   else reply in the original group thread (never a private chat, no notes or photo), but only for done/declined and comments marked notify.
  * - done/declined by anyone but the assignee (closing on their behalf): tell the assignee.
  * - done carries the deliverable: its note in the text and its first image as `photo`.
  * - never notify the actor about their own action. Thread replies never ping Telegram.
@@ -71,6 +71,7 @@ export function decide(
   if (!target || target.id === actor.personId) return [];
 
   let line: string;
+  let groupLine: string; // the group fallback: no notes or photo, the deliverable may have been sent privately
   let groupWorthy: boolean;
   let photo: OutgoingMessage["photo"];
   if (event.kind === "status") {
@@ -78,12 +79,13 @@ export function decide(
     const icon = event.status === "done" ? "✅" : event.status === "declined" ? "🚫" : "🔄";
     const resultNote = event.result?.note && event.result.note !== event.note ? `\n📦 ${quote(event.result.note)}` : "";
     const behalf = closedByOther ? `\nClosed by ${by} on behalf of you.` : "";
-    line = `${icon} ${tag} is ${event.status === "done" ? "done" : label}: <b>${title}</b>${behalf}${event.note ? `\n${by}: ${quote(event.note)}` : ""}${resultNote}`;
+    groupLine = `${icon} ${tag} is ${event.status === "done" ? "done" : label}: <b>${title}</b>${behalf}`;
+    line = `${groupLine}${event.note ? `\n${by}: ${quote(event.note)}` : ""}${resultNote}`;
     photo = event.result?.photo;
     groupWorthy = event.status === "done" || event.status === "declined";
   } else {
     if (!event.notify) return [];
-    line = `💬 ${by} on ${tag} <b>${title}</b>:\n${quote(event.text)}`;
+    line = groupLine = `💬 ${by} on ${tag} <b>${title}</b>:\n${quote(event.text)}`;
     groupWorthy = true;
   }
 
@@ -99,16 +101,16 @@ export function decide(
         ...(photo ? { photo } : {}),
       },
     ];
-  if (groupWorthy && request.chatId)
+  // only into a group (negative chat id): a request raised in a DM has the requester's private chat as chatId
+  if (groupWorthy && request.chatId != null && request.chatId < 0)
     return [
       {
         chatId: request.chatId,
         kind: "group_fallback",
         requestId: request.id,
         replyTo: request.sourceMessageId,
-        html: `${escapeHtml(displayName(target))}, ${line}`,
+        html: `${escapeHtml(displayName(target))}, ${groupLine}`,
         buttons,
-        ...(photo ? { photo } : {}),
       },
     ];
   return [];

@@ -69,8 +69,8 @@ export function DoneSheet({
                   picked === m.id ? "border-teal bg-teal-tint" : "border-line-soft",
                 )}
               >
-                <input type="radio" name="deliverable" checked={picked === m.id} onChange={() => setPicked(m.id)} className="accent-[var(--teal)]" />
-                <span className="min-w-0 flex-1 truncate">
+                <input type="radio" name="deliverable" checked={picked === m.id} onChange={() => setPicked(m.id)} className="size-4 shrink-0 accent-[var(--teal)]" />
+                <span className="min-w-0 flex-1 truncate pl-0.5">
                   <span className="font-medium text-ink">{m.name}</span>
                   {m.snippet && <span className="text-ink-soft">: {m.snippet}</span>}
                 </span>

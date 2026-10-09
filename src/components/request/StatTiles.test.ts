@@ -24,6 +24,8 @@ describe("tileMatches", () => {
     expect(tileMatches("done_this_week", row({ status: "done", doneAt: new Date(+now - 2 * day) }), now)).toBe(true);
     expect(tileMatches("done_this_week", row({ status: "done", doneAt: new Date(+now - 8 * day) }), now)).toBe(false);
     expect(tileMatches("done_this_week", row({ status: "declined", doneAt: new Date(+now - day) }), now)).toBe(false);
+    // same IST-day rule as the tile count: 6d23h ago is IST day D-7, so not this week
+    expect(tileMatches("done_this_week", row({ status: "done", doneAt: new Date(+now - 7 * day + 3600_000) }), now)).toBe(false);
   });
 });
 

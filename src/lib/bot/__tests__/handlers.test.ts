@@ -685,6 +685,21 @@ describe("round 2: the deliverable, closing on someone's behalf", () => {
     await t.run(status(ctx(own.chat, own.assignee, "/done"), "done", { replyToMessageId: own.sourceId }));
     expect(t.sent.at(-1)!.html).not.toMatch(/behalf/);
   });
+
+  it("'/done 12 <note>' replying to a photo not yet tied to the request: that message is stored and becomes the result", async () => {
+    const t = setup();
+    const { request, assignee, requester, chat } = await threaded({ requester: await makePerson(db, { startedBot: true }) });
+    const pic = ctx(chat, assignee, "", { photo: [{ file_id: "fposter", file_unique_id: "uposter", width: 10, height: 10 }] });
+    const c = ctx(chat, requester, `/done ${request.id} poster's up`, { reply_to_message: pic.message });
+    const res = await t.run({
+      ...status(c, "done", { requestId: request.id, replyToMessageId: pic.message.message_id, note: "poster's up" }),
+      replied: { message: pic.message, attachments: [photoOf(pic.message.message_id)] },
+    } as Intent);
+    expect(res.outcome).toBe("status.set");
+    const row = await rowOf(request.id, pic.message.message_id);
+    expect(row).toMatchObject({ kind: "thread", fromId: assignee.id });
+    expect(await requests.getById(db, systemActor(), request.id)).toMatchObject({ resultNote: "poster's up", resultMessageId: row.id });
+  });
 });
 
 describe("round 2: the 'Mark #N done?' button in the thread", () => {

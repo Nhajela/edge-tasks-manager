@@ -1,24 +1,11 @@
 import Link from "next/link";
-import { CLOSED } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 import { RAISED_TILES, type RaisedTileKey, type Tile } from "@/services/grouping";
-import type { ListItem } from "@/services/requests";
+export { tileMatches } from "@/services/grouping";
 
 /** ?tile=overdue etc.; anything else is no filter. */
 export function parseTile(v: string | string[] | undefined): RaisedTileKey | null {
   return RAISED_TILES.find((k) => k === v) ?? null;
-}
-
-/** Which rows a tapped tile keeps. ponytail: mirrors grouping.ts tile counts by hand; if they drift, export a predicate from grouping. */
-export function tileMatches(key: RaisedTileKey, item: ListItem, now: Date): boolean {
-  switch (key) {
-    case "overdue":
-      return !CLOSED.includes(item.status) && !!item.dueAt && +item.dueAt < +now;
-    case "done_this_week":
-      return item.status === "done" && !!item.doneAt && +now - +item.doneAt <= 7 * 86400_000;
-    default:
-      return item.status === key;
-  }
 }
 
 /** Raised stat tiles in a fixed order; only Overdue goes red (and only when > 0). Tapping one filters; tapping it again clears. */

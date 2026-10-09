@@ -175,7 +175,7 @@ describe("groupRaised", () => {
     expect(g.tiles).toEqual([
       { key: "overdue", title: "Overdue", count: 0, danger: true },
       { key: "open", title: "Open", count: 0, danger: false },
-      { key: "in_progress", title: "In progress", count: 0, danger: false },
+      { key: "in_progress", title: "Doing", count: 0, danger: false },
       { key: "waiting", title: "Waiting", count: 0, danger: false },
       { key: "done_this_week", title: "Done this week", count: 0, danger: false },
     ]);
