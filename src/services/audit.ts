@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lt, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, lt, sql, type SQL } from "drizzle-orm";
 import { auditLog } from "@/db/schema";
 import type { AuditEntry } from "@/lib/types";
 import type { Actor, DbClient } from "./types";
@@ -57,4 +57,17 @@ export async function listRecent(
     .where(and(...where))
     .orderBy(desc(auditLog.id))
     .limit(Math.min(opts.limit ?? 50, 500));
+}
+
+/** Filter options for /admin/activity: every action seen, and every person who acted (latest label). */
+export async function facets(db: DbClient): Promise<{ actions: string[]; actors: { personId: number; label: string }[] }> {
+  const [actions, actors] = await Promise.all([
+    db.selectDistinct({ action: auditLog.action }).from(auditLog).orderBy(auditLog.action),
+    db
+      .selectDistinctOn([auditLog.actorPersonId], { personId: sql<number>`${auditLog.actorPersonId}`, label: auditLog.actorLabel })
+      .from(auditLog)
+      .where(isNotNull(auditLog.actorPersonId))
+      .orderBy(auditLog.actorPersonId, desc(auditLog.id)),
+  ]);
+  return { actions: actions.map((a) => a.action), actors: actors.sort((a, b) => a.label.localeCompare(b.label)) };
 }

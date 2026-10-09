@@ -161,6 +161,22 @@ bot's my_chat_member handler warns the superadmin if it was added to a group whe
 (getMe `can_read_all_group_messages` false and not admin), and all other messages that are not tied to a request are
 ignored (never stored).
 
+### Status from anywhere in the thread
+Replying to **any** message that belongs to a request (transitive rule above, so any end of any reply chain) with a
+status command updates that request — no id needed:
+- `/done [note]` or `@<bot> done [note]` → status done, note saved as a comment, requester informed (DM if started_bot,
+  else a reply in the thread), bot reacts/replies "✅ #12 done" in the thread.
+- Same shape for `/doing` (`@<bot> on it`), `/waiting <reason>` (reason becomes the custom label),
+  `/decline <reason>`, `/reopen`. `/done 12 [note]` with an explicit id also works outside the thread.
+- Plain "done" without the command or bot mention is just a thread message (people say "done" in conversation), but if
+  the **assignee** writes exactly "done"/"done ✅"/"✅" as a reply in the thread, the bot replies with a one-tap
+  "Mark #12 done?" button (assignee only) instead of guessing.
+- Who may change status: assignee, requester, or admin. Anyone else gets a short "Only @assignee or @requester can
+  close #12" reply; their message still lands in the thread.
+- If a reply's chain resolves to no request, `/done` with no id answers "Reply to a request message, or use /done <id>".
+- The status change is one service call (`setStatus` with the note) → one audit row; the thread shows it inline as a
+  system line ("✅ Ravi marked this done: 'projector fixed'").
+
 ## Notifications (`src/lib/notify.ts`)
 On status change / comment / done by the assignee: DM the requester if `started_bot`; otherwise reply in the
 original group thread (reply_to source_message_id) with "✅ @alice, #12 is done: <title>" (for done/declined and

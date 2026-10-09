@@ -67,7 +67,7 @@ export type AddResult = Result & { duplicate: boolean };
 export type FieldResult = { request: Request; changed: boolean };
 
 export type StatusFilter = "open" | "done" | "all" | Status;
-export type ListFilter = { status?: StatusFilter; personId?: number; limit?: number; offset?: number };
+export type ListFilter = { status?: StatusFilter; personId?: number; chatId?: number; limit?: number; offset?: number };
 export type ListItem = Request & { requester: Person; assignee: Person; attachmentCount: number; threadCount: number };
 export type ListResult = { items: ListItem[]; counts: { open: number; done: number; all: number } };
 
@@ -425,6 +425,7 @@ async function list(db: DbClient, scope: SQL | undefined, filter: ListFilter): P
   const where = and(
     scope,
     filter.personId ? or(eq(requests.requesterId, filter.personId), eq(requests.assigneeId, filter.personId)) : undefined,
+    filter.chatId ? eq(requests.chatId, filter.chatId) : undefined,
   );
   const [rows, [counts]] = await Promise.all([
     db
@@ -484,6 +485,28 @@ export async function listBetween(db: DbClient, actor: Actor, otherPersonId: num
 export async function listAll(db: DbClient, actor: Actor, filter: ListFilter = {}): Promise<ListResult> {
   requireAdmin(actor);
   return list(db, undefined, filter);
+}
+
+/** Admin: the filter options for /admin, i.e. everyone on a request and every chat with its request count. */
+export async function adminFacets(
+  db: DbClient,
+  actor: Actor,
+): Promise<{ people: Person[]; chats: { chatId: number; chatTitle: string | null; count: number }[] }> {
+  requireAdmin(actor);
+  const [ps, chats] = await Promise.all([
+    db
+      .select()
+      .from(people)
+      .where(sql`${people.id} IN (SELECT ${requests.requesterId} FROM ${requests} UNION SELECT ${requests.assigneeId} FROM ${requests})`)
+      .orderBy(sql`coalesce(${people.username}, ${people.firstName})`),
+    db
+      .select({ chatId: sql<number>`${requests.chatId}`.mapWith(Number), chatTitle: sql<string | null>`max(${requests.chatTitle})`, count: sql<number>`count(*)::int` })
+      .from(requests)
+      .where(sql`${requests.chatId} IS NOT NULL`)
+      .groupBy(requests.chatId)
+      .orderBy(desc(sql`count(*)`)),
+  ]);
+  return { people: ps, chats };
 }
 
 export async function getDetail(db: DbClient, actor: Actor, id: number): Promise<Detail> {
