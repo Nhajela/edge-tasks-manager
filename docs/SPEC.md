@@ -26,6 +26,45 @@ SESSION_SECRET), R2_* (optional, future). The app must run with no bot token (de
 outgoing messages appended to `$TMP/edge-tasks-outbox.jsonl`, never really sent unless TELEGRAM_SEND_IN_DEV=1) and
 with no OpenRouter key (titler falls back to a heuristic title from the first ~8 words).
 
+## Architecture: one service layer, one audit log
+Pattern from `../../positivesumlabs/ps-tools/src/services` (read `types.ts`, `errors.ts`, `permissions.ts`, a service
+and its `__tests__`). Every business operation lives in `src/services/` as a caller-agnostic function
+`fn(db: DbClient, actor: Actor, input)`. **The bot webhook, server actions, API routes, MCP tools and the AI titler
+are thin adapters**: they resolve an Actor, call a service, and render the result. Nothing outside `src/services`
+writes to the database (except login_codes/session plumbing in `src/lib/login.ts`).
+- `DbClient`: drizzle Postgres type that works for both neon-http (prod) and node-postgres (tests); `src/db/index.ts`
+  picks neon-http for `*.neon.tech` URLs and `pg` otherwise. Services must not rely on interactive transactions
+  (neon-http has none); use single statements, `db.batch`-free sequences that are safe to retry, or `ON CONFLICT`.
+- `Actor`: `{ kind: 'person'|'system'|'ai'|'mcp', personId, displayName, isAdmin, via: 'telegram'|'web'|'mcp'|'ai'|'system' }`.
+- Typed errors (`NotFoundError`, `PermissionError`, `ValidationError`, `ConflictError`) mapped once per adapter.
+- Services: `people`, `requests` (create, append, addThreadMessage, setStatus, comment, setTitle/Priority/Due,
+  list*, getDetail), `permissions`, `notifications` (decides who to tell; sending goes through a `Notifier`
+  interface so tests capture messages instead of calling Telegram), `tokens`, `aiContext`, `audit`.
+- **One audit log**: a single `audit_log` table (id, at, actor_kind, actor_person_id, actor_label, via, action e.g.
+  `request.create` / `request.status` / `token.create` / `auth.login`, entity_type, entity_id, summary, data jsonb).
+  Every service mutation writes exactly one audit row through `audit.record()` in the same code path. The request
+  timeline on `/r/[id]` is a **read view over audit_log** filtered by entity (plus request_messages for message
+  content) — there is no separate request_events table. Admin `/admin/activity` shows the global log.
+- Side effects that must not slow the webhook (AI titling, notifications) are returned by services as an
+  `effects` list or scheduled by adapters with `after()`; services stay deterministic and testable.
+
+## Testing: TDD, fast and parallel
+Write the failing test first for every service and parser behaviour, then the code.
+- **Unit project** (`*.test.ts` outside `tests/db/`, no DB): parsers, formatters, prompt builders, signing. Fully parallel.
+- **DB project** (`tests/db/**/*.test.ts` or `src/services/__tests__`): runs against ONE persistent local Postgres in
+  Docker — container `etm-test-pg` on `localhost:5545` (user postgres, trust auth, tmpfs + fsync off; already running;
+  `scripts/test-db.sh` recreates it with `postgres:18` if missing). `globalSetup` pushes the schema once into a
+  template database `etm_test_template` (only when the schema hash changed — store it in a table), then each Vitest
+  worker creates `etm_test_<VITEST_POOL_ID>` from the template (`CREATE DATABASE … TEMPLATE …`, drop-if-exists first)
+  and **fileParallelism stays ON**. Tests isolate by creating their own data (unique fake telegram ids 91000000xx +
+  counter per worker) rather than truncating; a worker truncates only once at start.
+- Never point tests at Neon. `TEST_DATABASE_URL` defaults to `postgres://postgres@localhost:5545`.
+- Scripts: `pnpm test` (both projects), `pnpm test:unit`, `pnpm test:db`, `pnpm test:changed` (`vitest --changed`).
+  Keep the full suite under ~20s.
+- `.github/workflows/ci.yml`: postgres service container with the same fast flags, pnpm, typecheck + lint + test
+  sharded across 2 runners.
+- e2e (Playwright vs dev server pointing at the local test Postgres, never Neon) is a separate `pnpm e2e`.
+
 ## Data model (drizzle, `src/db/schema.ts`)
 - `people`: telegram_id (bigint, nullable until known), username (lowercase, no @, nullable), first_name,
   started_bot (bool: can we DM them), created/updated. Unique on telegram_id and on username. Upsert on every
@@ -39,9 +78,8 @@ with no OpenRouter key (titler falls back to a heuristic title from the first ~8
   ai_status (`pending|done|failed|skipped`), done_at, created/updated.
 - `request_messages`: each Telegram message attached to a request (the original + appended ones): request_id,
   chat_id, message_id, from_id → people, text, link, kind (`original|append|thread`), created.
-- `request_events`: timeline — request_id, actor_id → people (nullable for system/AI/MCP), kind
-  (`created|status|comment|append|thread|title|priority|due|assignee`), text, data jsonb, via (`telegram|web|mcp|ai`),
-  created. Comments and status updates are events.
+- `audit_log`: the ONE log of every mutation (see Architecture). Comments are audit rows with action
+  `request.comment` and the text in `summary`/`data`; the request timeline is read from here.
 - `attachments`: request_id, message_id, telegram_file_id, telegram_file_unique_id, kind (`photo|document`),
   mime, file_name, width/height, size, r2_key (nullable, future). Served publicly via
   `/api/files/<id>?sig=<hmac>` which streams from Telegram getFile (or R2 when r2_key set). Signed URLs = no
@@ -97,7 +135,7 @@ Any message from **anyone** that replies to a message tied to a request automati
 request's **thread** in the web UI — no `/append` or `/add` needed. "Tied to a request" = the command message, the
 original replied-to message (source), any appended message, the bot's confirmation message, or a message already in
 the thread (so reply chains keep threading). Store these in `request_messages` with kind `thread` (text/caption,
-author, link, photos as attachments) and a `thread` event in `request_events`. They do NOT change the request body
+author, link, photos as attachments) and an audit row `request.thread`. They do NOT change the request body
 (that stays `/append`'s job) and do not trigger re-titling. The assignee and requester get a quiet notification only
 via the dashboard (no Telegram ping for every thread reply, to avoid spam); the request page shows the thread as a
 chat-style conversation with "Open in Telegram" per message. Track every bot message id we send in a group
