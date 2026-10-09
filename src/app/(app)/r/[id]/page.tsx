@@ -43,8 +43,8 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
   });
   const { request: r, requester, assignee, createdBy, messages, attachments, timeline } = detail;
 
-  const original = messages.filter((m) => m.kind !== "thread");
-  const thread = messages.filter((m) => m.kind === "thread");
+  const original = messages.filter((m) => m.kind === "original" || m.kind === "append");
+  const thread = messages.filter((m) => m.kind === "thread" || m.kind === "status");
   // "Tell <them>": the requester tells the assignee, everyone else tells the requester
   const other = me.id === r.requesterId ? assignee : requester;
   const tellName = other.id === me.id ? null : displayName(other);

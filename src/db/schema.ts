@@ -3,6 +3,7 @@ import {
   bigint,
   boolean,
   check,
+  type AnyPgColumn,
   index,
   integer,
   jsonb,
@@ -70,6 +71,14 @@ export const requests = pgTable(
     aiQuestion: text("ai_question"),
     aiStatus: text("ai_status").$type<AiStatus>().notNull().default("pending"),
     doneAt: ts("done_at"),
+    /** First time the assignee opened it; null = "New" in their inbox. */
+    assigneeSeenAt: ts("assignee_seen_at"),
+    /** The deliverable shown on the "Delivered" card. Set on done / markDeliverable, cleared on reopen (history stays in audit_log). */
+    resultNote: text("result_note"),
+    /** → request_messages.id whose media is the deliverable */
+    resultMessageId: integer("result_message_id").references((): AnyPgColumn => requestMessages.id, { onDelete: "set null" }),
+    resultById: integer("result_by_id").references(() => people.id),
+    resultAt: ts("result_at"),
     createdAt: ts("created_at").notNull().defaultNow(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
@@ -86,7 +95,9 @@ export const requests = pgTable(
   ],
 );
 
-/** Each Telegram message attached to a request. Unique (chat, message) doubles as webhook-retry dedupe. */
+/**
+ * Each Telegram message attached to a request. kind 'status' = an in-thread status command (/done …): shown as a system
+ * line, not counted as a thread reply, still a reply-chain target. Unique (chat, message) doubles as webhook-retry dedupe. */
 export const requestMessages = pgTable(
   "request_messages",
   {
@@ -107,7 +118,7 @@ export const requestMessages = pgTable(
   (t) => [
     unique("request_messages_chat_message").on(t.chatId, t.messageId),
     index("request_messages_request").on(t.requestId),
-    check("request_messages_kind_check", sql`${t.kind} IN ('original','append','thread')`),
+    check("request_messages_kind_check", sql`${t.kind} IN ('original','append','thread','status')`),
   ],
 );
 

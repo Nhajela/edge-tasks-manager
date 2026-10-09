@@ -4,9 +4,11 @@
  * - assigned: DM the assignee if they started the bot.
  * - status/comment: tell the other side (requester acts → assignee, anyone else → requester); DM if possible,
  *   else reply in the original group thread, but only for done/declined and comments marked notify.
+ * - done/declined by anyone but the assignee (closing on their behalf): tell the assignee.
+ * - done carries the deliverable: its note in the text and its first image as `photo`.
  * - never notify the actor about their own action. Thread replies never ping Telegram.
  */
-import { SITE_URL, STATUS_LABEL } from "@/lib/constants";
+import { CLOSED, SITE_URL, STATUS_LABEL } from "@/lib/constants";
 import { escapeHtml } from "@/lib/html";
 import { displayName } from "@/lib/names";
 import type { Person, Request, Status } from "@/lib/types";
@@ -14,7 +16,14 @@ import type { Actor, OutgoingMessage } from "./types";
 
 export type NotifyEvent =
   | { kind: "assigned" }
-  | { kind: "status"; status: Status; customStatus?: string | null; note?: string | null }
+  | {
+      kind: "status";
+      status: Status;
+      customStatus?: string | null;
+      note?: string | null;
+      /** the deliverable on a done: note (when it differs from `note`) and the first image of the result message */
+      result?: { note?: string | null; photo?: OutgoingMessage["photo"] };
+    }
   | { kind: "comment"; text: string; notify: boolean };
 
 export interface Notifier {
@@ -57,15 +66,19 @@ export function decide(
     ];
   }
 
-  const target = actor.personId != null && actor.personId === request.requesterId ? assignee : requester;
+  const closedByOther = event.kind === "status" && CLOSED.includes(event.status) && actor.personId !== request.assigneeId;
+  const target = closedByOther || (actor.personId != null && actor.personId === request.requesterId) ? assignee : requester;
   if (!target || target.id === actor.personId) return [];
 
   let line: string;
   let groupWorthy: boolean;
+  let photo: OutgoingMessage["photo"];
   if (event.kind === "status") {
     const label = escapeHtml(event.customStatus || STATUS_LABEL[event.status].toLowerCase());
     const icon = event.status === "done" ? "✅" : event.status === "declined" ? "🚫" : "🔄";
-    line = `${icon} ${tag} is ${event.status === "done" ? "done" : label}: <b>${title}</b>${event.note ? `\n${by}: ${quote(event.note)}` : ""}`;
+    const resultNote = event.result?.note && event.result.note !== event.note ? `\n📦 ${quote(event.result.note)}` : "";
+    line = `${icon} ${tag} is ${event.status === "done" ? "done" : label}: <b>${title}</b>${event.note ? `\n${by}: ${quote(event.note)}` : ""}${resultNote}`;
+    photo = event.result?.photo;
     groupWorthy = event.status === "done" || event.status === "declined";
   } else {
     if (!event.notify) return [];
@@ -82,6 +95,7 @@ export function decide(
         recipientPersonId: target.id,
         html: line,
         buttons,
+        ...(photo ? { photo } : {}),
       },
     ];
   if (groupWorthy && request.chatId)
@@ -93,6 +107,7 @@ export function decide(
         replyTo: request.sourceMessageId,
         html: `${escapeHtml(displayName(target))}, ${line}`,
         buttons,
+        ...(photo ? { photo } : {}),
       },
     ];
   return [];

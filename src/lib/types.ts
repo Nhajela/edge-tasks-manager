@@ -5,7 +5,7 @@ export type Priority = "low" | "normal" | "high" | "urgent";
 export type Via = "telegram" | "web" | "mcp" | "ai" | "system";
 export type ActorKind = "person" | "system" | "ai" | "mcp";
 export type AiStatus = "pending" | "done" | "failed" | "skipped";
-export type MessageKind = "original" | "append" | "thread";
+export type MessageKind = "original" | "append" | "thread" | "status";
 
 export type Person = typeof people.$inferSelect;
 export type Request = typeof requests.$inferSelect;

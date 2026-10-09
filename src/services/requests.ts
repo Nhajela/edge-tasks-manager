@@ -68,7 +68,19 @@ export type AddResult = Result & { duplicate: boolean; duplicateOf?: number };
 export type FieldResult = { request: Request; changed: boolean };
 
 export type StatusFilter = "open" | "done" | "all" | Status;
-export type ListFilter = { status?: StatusFilter; personId?: number; chatId?: number; limit?: number; offset?: number };
+export type ListFilter = {
+  status?: StatusFilter;
+  personId?: number;
+  chatId?: number;
+  /** drop done/declined items closed before this (open ones always pass), e.g. grouping's 14-day Done bucket */
+  closedSince?: Date;
+  limit?: number;
+  offset?: number;
+};
+/**
+ * A list row: the whole request (status, customStatus, priority, dueAt, chatTitle, assigneeSeenAt, resultNote, updatedAt…)
+ * plus both people and counts. threadCount counts kind 'thread' only (status commands excluded).
+ */
 export type ListItem = Request & { requester: Person; assignee: Person; attachmentCount: number; threadCount: number };
 export type ListResult = { items: ListItem[]; counts: { open: number; done: number; all: number } };
 
@@ -209,7 +221,7 @@ export async function create(db: DbClient, actor: Actor, input: CreateInput): Pr
 }
 
 /** Stores a Telegram message on the request; false when (chat, message) is already stored (a redelivery). */
-async function insertMessage(db: DbClient, requestId: number, input: Omit<MessageAddInput, "requestId">, kind: "append" | "thread") {
+async function insertMessage(db: DbClient, requestId: number, input: Omit<MessageAddInput, "requestId">, kind: "append" | "thread" | "status") {
   if (input.chatId == null || input.messageId == null) return true;
   const inserted = await db
     .insert(requestMessages)
@@ -337,18 +349,50 @@ export async function setBotConfirmation(
 
 // ─── status / comment / fields ───────────────────────────
 
-export async function setStatus(
-  db: DbClient,
-  actor: Actor,
-  id: number,
-  input: { status: Status; customStatus?: string | null; note?: string | null; message?: Omit<MessageAddInput, "requestId"> },
-): Promise<Result & { duplicate?: boolean }> {
+/** A request_messages row of this request (the deliverable must point inside the request). */
+async function requireOwnMessage(db: DbClient, requestId: number, messageId: number) {
+  const [m] = await db
+    .select({ id: requestMessages.id, chatId: requestMessages.chatId, messageId: requestMessages.messageId })
+    .from(requestMessages)
+    .where(and(eq(requestMessages.id, messageId), eq(requestMessages.requestId, requestId)));
+  if (!m) throw new ValidationError("That message is not part of this request.", { messageId });
+  return m;
+}
+
+/** First photo of a stored message, for the done notification. */
+async function firstPhoto(db: DbClient, requestId: number, m: { chatId: number; messageId: number }) {
+  const [a] = await db
+    .select({ fileId: attachments.telegramFileId })
+    .from(attachments)
+    .where(and(eq(attachments.requestId, requestId), eq(attachments.chatId, m.chatId), eq(attachments.messageId, m.messageId), eq(attachments.kind, "photo")))
+    .orderBy(asc(attachments.id))
+    .limit(1);
+  return a ?? null;
+}
+
+export type SetStatusInput = {
+  status: Status;
+  customStatus?: string | null;
+  /** shown in the timeline and the notification; on done it is also the result note unless `result.note` is given */
+  note?: string | null;
+  /** the Telegram status command, stored as kind 'status' (dedupe key); its media is the deliverable on a done */
+  message?: Omit<MessageAddInput, "requestId">;
+  /** the deliverable on a done. messageId = request_messages.id of this request (a thread/original message). */
+  result?: { note?: string | null; messageId?: number | null };
+};
+
+/**
+ * Status change, one audit row. Done records the deliverable (result_* columns); any other status clears the highlighted
+ * result (the audit row of the done keeps it). Closing by someone other than the assignee is "on behalf of" them.
+ */
+export async function setStatus(db: DbClient, actor: Actor, id: number, input: SetStatusInput): Promise<Result & { duplicate?: boolean }> {
   if (!STATUSES.includes(input.status)) throw new ValidationError("Unknown status.", { status: input.status });
   const before = await load(db, id);
   requireManage(actor, before);
+  if (input.result?.messageId != null) await requireOwnMessage(db, id, input.result.messageId);
   // the Telegram command message is stored (replies to it chain, its media kept) under this one status audit row
   const msg = input.message;
-  if (msg && !(await insertMessage(db, id, msg, "thread"))) return { request: before, effects: [], duplicate: true };
+  if (msg && !(await insertMessage(db, id, msg, "status"))) return { request: before, effects: [], duplicate: true };
   await insertAttachments(db, id, msg?.chatId, msg?.attachments);
   const customStatus =
     input.customStatus === undefined
@@ -360,24 +404,108 @@ export async function setStatus(
         : null;
   const closed = CLOSED.includes(input.status);
   const note = input.note?.trim() ? requireText(input.note, "Note", TEXT_LIMITS.comment) : null;
+
+  // the deliverable: an explicit message, else the command message when it carries media
+  let result: { note: string | null; messageId: number | null } | null = null;
+  let photo: { fileId: string } | null = null;
+  if (input.status === "done") {
+    const rNote = input.result?.note?.trim() ? requireText(input.result.note, "Result note", TEXT_LIMITS.comment) : note;
+    let rMsgId = input.result?.messageId ?? null;
+    if (rMsgId == null && msg?.attachments?.length && msg.chatId != null && msg.messageId != null) {
+      const [row] = await db
+        .select({ id: requestMessages.id })
+        .from(requestMessages)
+        .where(and(eq(requestMessages.chatId, msg.chatId), eq(requestMessages.messageId, msg.messageId)));
+      rMsgId = row?.id ?? null;
+    }
+    if (rNote || rMsgId != null) result = { note: rNote, messageId: rMsgId };
+    if (rMsgId != null) photo = await firstPhoto(db, id, await requireOwnMessage(db, id, rMsgId));
+  }
+  // a repeat done without a new result keeps the one already there
+  const keepResult = input.status === "done" && before.status === "done" && !result;
+  const now = new Date();
   const [request] = await db
     .update(requests)
     .set({
       status: input.status,
       customStatus,
-      doneAt: closed ? (before.doneAt ?? new Date()) : null,
-      updatedAt: new Date(),
+      doneAt: closed ? (before.doneAt ?? now) : null,
+      ...(keepResult
+        ? {}
+        : {
+            resultNote: result?.note ?? null,
+            resultMessageId: result?.messageId ?? null,
+            resultById: result ? actor.personId : null,
+            resultAt: result ? now : null,
+          }),
+      updatedAt: now,
     })
     .where(eq(requests.id, id))
     .returning();
+  const onBehalfOf = actor.personId !== before.assigneeId ? before.assigneeId : undefined;
   await audit.record(db, actor, {
     action: "request.status",
     entityType: "request",
     entityId: id,
     summary: (customStatus ?? STATUS_LABEL[input.status]) + (note ? ` — ${clip(note)}` : ""),
-    data: { from: before.status, to: input.status, customStatus, note, ...(msg ? { messageId: msg.messageId ?? null } : {}) },
+    data: {
+      from: before.status,
+      to: input.status,
+      customStatus,
+      note,
+      ...(msg ? { messageId: msg.messageId ?? null } : {}),
+      ...(result ? { result } : {}),
+      ...(onBehalfOf != null ? { onBehalfOf } : {}),
+    },
   });
-  return { request, effects: await notifyEffects(db, actor, request, { kind: "status", status: input.status, customStatus, note }) };
+  return {
+    request,
+    effects: await notifyEffects(db, actor, request, {
+      kind: "status",
+      status: input.status,
+      customStatus,
+      note,
+      ...(result || photo ? { result: { note: result?.note, photo } } : {}),
+    }),
+  };
+}
+
+/** ⭐ Mark a thread/original message as the deliverable (assignee, requester, admin). Keeps the result note. */
+export async function markDeliverable(db: DbClient, actor: Actor, requestId: number, messageId: number): Promise<{ request: Request }> {
+  const before = await load(db, requestId);
+  requireManage(actor, before);
+  await requireOwnMessage(db, requestId, messageId);
+  const now = new Date();
+  const [request] = await db
+    .update(requests)
+    .set({ resultMessageId: messageId, resultById: actor.personId, resultAt: now, updatedAt: now })
+    .where(eq(requests.id, requestId))
+    .returning();
+  await audit.record(db, actor, {
+    action: "request.deliverable",
+    entityType: "request",
+    entityId: requestId,
+    summary: "Marked as deliverable",
+    data: { messageId, from: before.resultMessageId },
+  });
+  return { request };
+}
+
+/**
+ * The assignee opened the request: sets assignee_seen_at once (moves it out of "New"), with one request.seen audit row.
+ * Anyone else, and every later view, is a no-op (changed: false), so pages can call it on every view.
+ */
+export async function markSeen(db: DbClient, actor: Actor, requestId: number): Promise<{ request: Request; changed: boolean }> {
+  const before = await load(db, requestId);
+  if (actor.personId == null || actor.personId !== before.assigneeId || before.assigneeSeenAt) return { request: before, changed: false };
+  const [request] = await db
+    .update(requests)
+    .set({ assigneeSeenAt: new Date() })
+    .where(and(eq(requests.id, requestId), eq(requests.assigneeId, actor.personId), sql`${requests.assigneeSeenAt} IS NULL`))
+    .returning();
+  if (!request) return { request: await load(db, requestId), changed: false }; // a concurrent view won
+  await audit.record(db, actor, { action: "request.seen", entityType: "request", entityId: requestId, summary: "Seen" });
+  return { request, changed: true };
 }
 
 /** Comments are audit rows (action request.comment); the timeline reads them from there. */
@@ -490,7 +618,13 @@ async function list(db: DbClient, scope: SQL | undefined, filter: ListFilter): P
       .from(requests)
       .innerJoin(requesterP, eq(requesterP.id, requests.requesterId))
       .innerJoin(assigneeP, eq(assigneeP.id, requests.assigneeId))
-      .where(and(where, statusWhere(filter.status)))
+      .where(
+        and(
+          where,
+          statusWhere(filter.status),
+          filter.closedSince ? or(notInArray(requests.status, CLOSED), gt(requests.doneAt, filter.closedSince)) : undefined,
+        ),
+      )
       .orderBy(desc(requests.createdAt), desc(requests.id))
       .limit(Math.min(filter.limit ?? 100, 500))
       .offset(filter.offset ?? 0),

@@ -108,3 +108,14 @@ Three reviewer findings, all confirmed in the code. Each fix has a failing test 
 | 3 | A thread status command writes two audit rows | fixed (partly) | `setStatus` takes an optional `message`. It stores the command message and attachments and writes one `request.status` row with `data.messageId`. `request.thread` is written only on the forbidden path ("their message still lands in the thread") and on the unchanged path. Not done: the message is still stored with kind `thread`, so it still shows as a bubble and counts in `threadCount`. A separate `command` kind needs a schema check change and a prod `db:push`, plus a "system line" thread renderer. Left for a deliberate UI pass. |
 
 Checks: tsc clean, lint 0 errors (1 old warning in `tokens.ts`), `pnpm test` 285 tests in 9.9s, `pnpm build` 17.5s, `pnpm e2e` passed in 29.7s.
+
+## Round 2 contract (2026-10-09)
+
+Shared surface for the round-2 tasks (grouping, status from anywhere, closing on behalf + deliverable). Tests in `src/services/__tests__/requests.round2.test.ts`.
+
+- Schema: `requests.assignee_seen_at`, `result_note`, `result_message_id` (→ request_messages, set null), `result_by_id`, `result_at`. `request_messages.kind` allows `status`.
+- `setStatus(db, actor, id, { status, customStatus?, note?, message?, result?: { note?, messageId? } })`: the command `message` is stored as kind `status`. On done it records the result: note = `result.note` ?? `note`; message = `result.messageId` (a request_messages.id of this request) ?? the command message when it has media. Any other status clears `result_*`; the done audit row keeps `data.result`. When the actor is not the assignee, `data.onBehalfOf = assigneeId`.
+- `markDeliverable(db, actor, requestId, messageId)` writes `request.deliverable`. `markSeen(db, actor, requestId)` writes `request.seen` the first time the assignee opens it; any other call does nothing.
+- Notifications: done/declined by anyone but the assignee goes to the assignee. A done carries `photo: { fileId }` (the result message's first photo). `OutgoingMessage.photo` exists, but `lib/telegram.ts` does not send it yet (no sendPhoto).
+- `ListFilter.closedSince` drops done/declined items closed earlier. `services/grouping.ts` has typed stubs that throw.
+- Neon dev: `pnpm db:push` added the columns, but it left `request_messages_kind_check` at its old value (`original, append`; even `thread` was missing). drizzle-kit does not diff check bodies. I replaced it by hand. **Prod needs the same fix**: `ALTER TABLE request_messages DROP CONSTRAINT request_messages_kind_check, ADD CONSTRAINT request_messages_kind_check CHECK (kind IN ('original','append','thread','status'))`, then `scripts/migrate-status-kind.mjs` (idempotent; re-tags old in-thread status rows from their audit `messageId`).
