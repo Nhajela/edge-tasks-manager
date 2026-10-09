@@ -42,6 +42,8 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
     throw e;
   });
   const { request: r, requester, assignee, createdBy, messages, attachments, timeline } = detail;
+  // the assignee opened it: out of "New" (a no-op for everyone else and every later view)
+  if (me.id === r.assigneeId && !r.assigneeSeenAt) await requests.markSeen(db(), actor, id);
 
   const original = messages.filter((m) => m.kind === "original" || m.kind === "append");
   const thread = messages.filter((m) => m.kind === "thread" || m.kind === "status");

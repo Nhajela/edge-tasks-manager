@@ -1,29 +1,32 @@
-import { Note } from "@/components/bits";
-import { ListTabs, StatusChips, parseListStatus } from "@/components/request/ListFilters";
+import { ListTabs } from "@/components/request/ListFilters";
 import { db } from "@/db";
 import { requireViewer } from "@/lib/viewer";
 import * as requests from "@/services/requests";
+import { AutoRefresh } from "./AutoRefresh";
+import { CaughtUp } from "./CaughtUp";
 import { RowList } from "./RowList";
 
-const EMPTY = {
-  open: "Nothing waiting on you. When someone asks you for something in Telegram, it shows up here.",
-  done: "Nothing finished yet. Tick a request to mark it done.",
-  all: "No one has asked you for anything yet.",
-};
+const DONE_DAYS = 14;
 
-export default async function InboxPage({ searchParams }: { searchParams: Promise<{ status?: string | string[] }> }) {
+export default async function InboxPage() {
   const v = await requireViewer("/inbox");
-  const status = parseListStatus((await searchParams).status);
+  const now = new Date();
   const [list, raised] = await Promise.all([
-    requests.listInbox(db(), v.actor, { status }),
+    requests.listInbox(db(), v.actor, { status: "all", closedSince: new Date(+now - DONE_DAYS * 86400_000), limit: 500 }),
     requests.listRaised(db(), v.actor, { limit: 0 }),
   ]);
   return (
-    <section className="flex flex-col gap-4">
+    <section className="flex flex-col gap-5">
       <h1 className="sr-only">To me</h1>
+      <AutoRefresh />
       <ListTabs current="inbox" inboxOpen={list.counts.open} raisedOpen={raised.counts.open} />
-      <StatusChips base="/inbox" current={status} counts={list.counts} />
-      {list.items.length ? <RowList items={list.items} meId={v.person.id} filter={status} mode="inbox" /> : <Note>{EMPTY[status]}</Note>}
+      <RowList
+        items={list.items}
+        meId={v.person.id}
+        view="inbox"
+        now={now.toISOString()}
+        empty={<CaughtUp lead="Nothing waiting on you. When someone asks you for something in Telegram, it shows up here." />}
+      />
     </section>
   );
 }
