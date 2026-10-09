@@ -7,10 +7,12 @@ import { DueLabel } from "@/components/request/DueLabel";
 import { PersonChip } from "@/components/request/PersonChip";
 import { PriorityDot } from "@/components/request/PriorityDot";
 import { StatusPill } from "@/components/request/StatusPill";
-import { STATUSES, STATUS_LABEL } from "@/lib/constants";
+import { CLOSED, STATUSES, STATUS_LABEL } from "@/lib/constants";
 import { relativeTime } from "@/lib/format";
 import { displayName } from "@/lib/names";
 import * as requests from "@/services/requests";
+import { Group } from "../with/Group";
+import { byAssignee } from "./byAssignee";
 import { AdminHeader, Chip, Select, hrefWith, intParam, param, requireAdminViewer } from "./_ui";
 
 const PAGE = 100;
@@ -28,6 +30,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
     requests.listAll(db(), actor, { status, personId, chatId, limit: PAGE, offset }),
     requests.adminFacets(db(), actor),
   ]);
+  const now = new Date();
   const keep = { person: personId, chat: chatId };
   const count = (s: string) => (s === "open" || s === "done" || s === "all" ? list.counts[s] : null);
   const filtered = personId != null || chatId != null;
@@ -77,37 +80,53 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
       {list.items.length === 0 ? (
         <Note>No requests match these filters.</Note>
       ) : (
-        <ul className="divide-y divide-line-soft overflow-hidden rounded-[var(--radius-card)] border border-line-soft bg-card">
-          {list.items.map((r) => (
-            <li key={r.id} className="relative flex flex-col gap-1.5 px-4 py-3 hover:bg-sand/50">
-              <div className="flex items-start gap-2.5">
-                <PriorityDot priority={r.priority} className="mt-[7px]" />
-                <Link href={`/r/${r.id}`} className="min-w-0 flex-1 font-medium leading-6 after:absolute after:inset-0">
-                  <span className="tnum mr-1.5 text-ink-mute">#{r.id}</span>
-                  {r.title}
-                </Link>
-                <StatusPill status={r.status} customStatus={r.customStatus} className="max-w-[40%] shrink-0" />
-              </div>
-              {/* people links sit above the row-wide link */}
-              <div className="relative z-10 flex flex-wrap items-center gap-x-2 gap-y-1 pl-5 text-[13.5px] text-ink-mute">
-                <span className="flex min-w-0 items-center gap-1">
-                  <PersonChip person={r.requester} className="font-normal text-ink-soft" />
-                  <span aria-label="to">→</span>
-                  <PersonChip person={r.assignee} className="font-normal text-ink-soft" />
+        <div className="flex flex-col gap-4">
+          {byAssignee(list.items, now).map((g) => (
+            <Group
+              key={g.person.id}
+              title={displayName(g.person)}
+              count={g.items.length}
+              meta={
+                // the count chip already says how many; only add what it doesn't
+                <span className="text-[13px] font-normal text-ink-soft">
+                  {g.open !== g.items.length && `${g.open} open`}
+                  {g.open !== g.items.length && g.overdue > 0 && " · "}
+                  {g.overdue > 0 && <span className="font-medium text-danger">{g.overdue} overdue</span>}
                 </span>
-                {r.chatTitle && <span className="truncate">· {r.chatTitle}</span>}
-                <span>· {relativeTime(r.createdAt)}</span>
-                <DueLabel dueAt={r.dueAt} />
-                {r.attachmentCount > 0 && (
-                  <span className="inline-flex items-center gap-0.5" aria-label={`${r.attachmentCount} attachments`}>
-                    <ImageIcon className="size-3.5" aria-hidden />
-                    {r.attachmentCount}
-                  </span>
-                )}
-              </div>
-            </li>
+              }
+            >
+              <ul className="divide-y divide-line-soft overflow-hidden rounded-[var(--radius-card)] border border-line-soft bg-card">
+                {g.items.map((r) => (
+                  <li key={r.id} className="relative flex flex-col gap-1.5 px-4 py-3 hover:bg-sand/50">
+                    <div className="flex items-start gap-2.5">
+                      <PriorityDot priority={r.priority} className="mt-[7px]" />
+                      <Link href={`/r/${r.id}`} className="min-w-0 flex-1 font-medium leading-6 after:absolute after:inset-0">
+                        <span className="tnum mr-1.5 text-ink-mute">#{r.id}</span>
+                        {r.title}
+                      </Link>
+                      <StatusPill status={r.status} customStatus={r.customStatus} className="max-w-[40%] shrink-0" />
+                    </div>
+                    {/* the header already names the assignee; people links sit above the row-wide link */}
+                    <div className="relative z-10 flex flex-wrap items-center gap-x-2 gap-y-1 pl-5 text-[13.5px] text-ink-mute">
+                      <span className="flex min-w-0 items-center gap-1">
+                        from <PersonChip person={r.requester} className="font-normal text-ink-soft" />
+                      </span>
+                      <span>· {relativeTime(r.createdAt, now)}</span>
+                      {!CLOSED.includes(r.status) && <DueLabel dueAt={r.dueAt} now={now} />}
+                      {r.attachmentCount > 0 && (
+                        <span className="inline-flex items-center gap-0.5" aria-label={`${r.attachmentCount} attachments`}>
+                          <ImageIcon className="size-3.5" aria-hidden />
+                          {r.attachmentCount}
+                        </span>
+                      )}
+                      {r.chatTitle && <span className="truncate text-ink-mute/80">· {r.chatTitle}</span>}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Group>
           ))}
-        </ul>
+        </div>
       )}
 
       {(offset > 0 || list.items.length === PAGE) && (
