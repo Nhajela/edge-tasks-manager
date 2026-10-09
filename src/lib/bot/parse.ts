@@ -155,13 +155,12 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
 
   if (!reply) return ignore("not addressed to the bot");
   const attachments = attachmentsOf(message);
-  if (reply.from?.is_bot && reply.from.username?.toLowerCase() === bot) {
-    if (!text.trim() && !attachments.length) return ignore("nothing to store");
+  const bare = !text.trim() && !attachments.length;
+  // a sticker/voice note to the bot can't answer a prompt or append: it is only ever a thread message
+  if (reply.from?.is_bot && reply.from.username?.toLowerCase() === bot && !bare)
     return { kind: "pending-reply", botMessageId: reply.message_id, text: text.trim(), attachments, ...c };
-  }
   // the handler keeps it only if the replied message is tied to a request (findRequestByTelegramMessage); stickers,
   // voice notes etc. are stored too, so a later reply to them still chains back to the request
   const media = MEDIA.find(([k]) => k in message)?.[1] ?? "message";
-  const body = text.trim() || (attachments.length ? "" : `(${media})`);
-  return { kind: "thread", replyToMessageId: reply.message_id, text: body, attachments, ...c };
+  return { kind: "thread", replyToMessageId: reply.message_id, text: bare ? `(${media})` : text.trim(), attachments, ...c };
 }

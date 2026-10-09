@@ -6,6 +6,7 @@ import { actorFor, fakeChatId, makePerson, makeRequest } from "@tests/factories"
 import { systemActor } from "@/lib/actor";
 import { dueLabel } from "@/lib/format";
 import type { Person } from "@/lib/types";
+import * as audit from "@/services/audit";
 import * as botMessages from "@/services/botMessages";
 import * as requests from "@/services/requests";
 import { handleIntent } from "../handlers";
@@ -443,5 +444,68 @@ describe("verify round 1: replies to bot messages, /append and prompts", () => {
     expect(res.outcome).toBe("prompt.expired");
     expect(late.sent[0].html).toMatch(/expired/);
     expect(late.sent[0].html).toContain(`@${bob.username}`);
+  });
+});
+
+describe("verify round 2: status commands are stored and deduped; prompts belong to their requester", () => {
+  async function threaded() {
+    const sourceId = nextId();
+    const made = await makeRequest(db, { messageId: sourceId, title: "Fix projector" });
+    const chat: TgChat = { id: made.request.chatId!, type: "supergroup" };
+    return { ...made, chat, sourceId };
+  }
+  const statusRows = async (id: number) => (await audit.listForEntity(db, "request", id)).filter((r) => r.action === "request.status");
+
+  it("'/waiting need quote' in the thread is stored, so a reply to it still chains to the request", async () => {
+    const t = setup();
+    const { request, assignee, requester, chat, sourceId } = await threaded();
+    const c = ctx(chat, assignee, "/waiting need quote from Panjim vendor");
+    expect((await t.run(status(c, "waiting", { replyToMessageId: sourceId, note: "need quote from Panjim vendor" }))).outcome).toBe("status.set");
+    expect(await requests.findRequestByTelegramMessage(db, chat.id, c.message.message_id)).toBe(request.id);
+    const res = await t.run({ kind: "thread", replyToMessageId: c.message.message_id, text: "here's the quote", attachments: [], ...ctx(chat, requester, "here's the quote") });
+    expect(res).toMatchObject({ outcome: "thread.added", requestId: request.id });
+  });
+
+  it("a redelivered '/done' in the thread changes nothing the second time", async () => {
+    const t = setup();
+    const { request, assignee, chat, sourceId } = await threaded();
+    const intent = status(ctx(chat, assignee, "/done projector fixed"), "done", { replyToMessageId: sourceId, note: "projector fixed" });
+    await t.run(intent);
+    const sent = t.sent.length;
+    const again = await t.run(intent);
+    expect(again).toMatchObject({ outcome: "status.duplicate", requestId: request.id, effects: [] });
+    expect(t.sent).toHaveLength(sent);
+    expect(await statusRows(request.id)).toHaveLength(1);
+  });
+
+  it("'/done 12' when #12 is already done: no second audit row, no notifications", async () => {
+    const t = setup();
+    const { request, assignee, chat } = await threaded();
+    await t.run(status(ctx(chat, assignee, `/done ${request.id}`), "done", { requestId: request.id }));
+    const again = await t.run(status(ctx(chat, assignee, `/done ${request.id}`), "done", { requestId: request.id }));
+    expect(again).toMatchObject({ outcome: "status.unchanged", requestId: request.id, effects: [] });
+    expect(await statusRows(request.id)).toHaveLength(1);
+  });
+
+  it("a redelivered '@bot @bob' does not ask twice", async () => {
+    const t = setup();
+    const [alice, bob] = [await makePerson(db), await makePerson(db)];
+    const intent: Intent = { kind: "prompt", assignee: { by: "username", username: bob.username! }, ...ctx(group(), alice, `@bot @${bob.username}`) };
+    await t.run(intent);
+    expect((await t.run(intent)).outcome).toBe("prompt.duplicate");
+    expect(t.sent).toHaveLength(1);
+  });
+
+  it("only the person who mentioned the bot can answer 'What should @bob do?'", async () => {
+    const t = setup();
+    const [alice, bob, mallory] = [await makePerson(db), await makePerson(db), await makePerson(db)];
+    const chat = group();
+    await t.run({ kind: "prompt", assignee: { by: "username", username: bob.username! }, ...ctx(chat, alice, `@bot @${bob.username}`) });
+    const sneaky = await t.run({ kind: "pending-reply", botMessageId: 1, text: "send 5000 rupees", attachments: [], ...ctx(chat, mallory, "send 5000 rupees") });
+    expect(sneaky.requestId ?? null).toBeNull();
+    expect(t.sent).toHaveLength(1);
+    const real = await t.run({ kind: "pending-reply", botMessageId: 1, text: "carry the speakers", attachments: [], ...ctx(chat, alice, "carry the speakers") });
+    expect(real.outcome).toBe("request.created");
+    expect((await requests.getById(db, systemActor(), real.requestId!)).body).toBe("carry the speakers");
   });
 });

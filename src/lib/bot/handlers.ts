@@ -220,7 +220,7 @@ async function onThread(c: Ctx, i: Extract<Intent, { kind: "thread" }>) {
 
 async function onPendingReply(c: Ctx, i: Extract<Intent, { kind: "pending-reply" }>) {
   const { actor, person } = await sender(c, i);
-  // ponytail: anyone's reply claims the prompt (the requester stays whoever mentioned the bot); check the replier if that gets abused
+  // only the person who mentioned the bot can answer (consume checks); anyone else falls through and is ignored
   const p = await prompts.consume(c.db, actor, { chatId: i.chat.id, promptMessageId: i.botMessageId, now: c.deps.now() });
   if (p) {
     const body = i.text.trim() || (i.attachments.length ? "(attachment)" : "");
@@ -247,6 +247,7 @@ async function onPendingReply(c: Ctx, i: Extract<Intent, { kind: "pending-reply"
   if (requestId == null) {
     const stale = await prompts.find(c.db, i.chat.id, i.botMessageId);
     if (!stale || stale.consumedAt) return result("pending-reply.unrelated");
+    if (stale.expiresAt > c.deps.now()) return result("prompt.not-requester");
     await reply(c, i, copy.promptExpired(await people.getById(c.db, stale.assigneeId)));
     return result("prompt.expired");
   }
@@ -259,6 +260,8 @@ async function onPendingReply(c: Ctx, i: Extract<Intent, { kind: "pending-reply"
 
 async function onPrompt(c: Ctx, i: Extract<Intent, { kind: "prompt" }>) {
   const { actor, person } = await sender(c, i);
+  // ponytail: two redeliveries racing both pass this check; fine for Telegram's sequential retries
+  if (await prompts.findBySource(c.db, i.chat.id, i.message.message_id)) return result("prompt.duplicate");
   const assignee = await resolve(c, i.assignee);
   const sent = await reply(c, i, copy.prompt(assignee), { kind: "prompt" });
   if (!sent.ok || !sent.messageId) return result("prompt.unsent");
@@ -324,6 +327,26 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
     return result("status.no-target");
   }
   const note = i.note?.trim() || null;
+  if (viaThread) {
+    // SPEC: every captured message is stored (later replies to it chain); a stored one is a Telegram redelivery
+    const stored = await requests.addThreadMessage(c.db, actor, {
+      requestId,
+      chatId: i.chat.id,
+      messageId: i.message.message_id,
+      replyToMessageId: i.replyToMessageId,
+      fromId: person.id,
+      text: textOf(i.message),
+      link: messageLink(i.chat, i.message.message_id),
+    });
+    if (stored.duplicate) return result("status.duplicate", requestId);
+  } else {
+    // "/done 12" twice (or redelivered): no second audit row or ping, same as the DM buttons
+    const before = await requests.getById(c.db, actor, requestId);
+    if (before.status === i.status && !note) {
+      await reply(c, i, copy.statusSet(before), { requestId });
+      return result("status.unchanged", requestId);
+    }
+  }
   try {
     const res = await requests.setStatus(c.db, actor, requestId, i.status === "waiting" ? { status: i.status, customStatus: note } : { status: i.status, note });
     // a group fallback ("@alice, ✅ #12 is done") will say it in this chat already
@@ -334,15 +357,6 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
     // only inside the thread (they can see it anyway) do we name the parties; "/done 12" from a stranger gets the generic error
     if (!(e instanceof PermissionError) || !viaThread) throw e;
     const r = await requests.getById(c.db, systemActor(), requestId);
-    await requests.addThreadMessage(c.db, actor, {
-      requestId,
-      chatId: i.chat.id,
-      messageId: i.message.message_id,
-      replyToMessageId: i.replyToMessageId,
-      fromId: person.id,
-      text: textOf(i.message),
-      link: messageLink(i.chat, i.message.message_id),
-    });
     await reply(c, i, copy.cantChange(r, await people.getById(c.db, r.requesterId), await people.getById(c.db, r.assigneeId)), { requestId });
     return result("status.forbidden", requestId);
   }

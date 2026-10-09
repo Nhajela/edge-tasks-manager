@@ -104,4 +104,11 @@ describe("verify round 1", () => {
     expect((await people.getById(db, alice.id))?.username).toBe(alice.username);
     expect((await people.getById(db, bob.id))?.username).toBe(foo);
   });
+
+  it("verify round 2: a web visit never flips started_bot back on (only /start does, audited)", async () => {
+    const alice = await makePerson(db, { startedBot: false });
+    const { person } = await actorFromSession(db, { telegramId: String(alice.telegramId), username: null, firstName: "Alice" });
+    expect(person.id).toBe(alice.id);
+    expect((await people.getById(db, alice.id))?.startedBot).toBe(false);
+  });
 });

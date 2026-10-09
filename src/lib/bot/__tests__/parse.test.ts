@@ -157,9 +157,12 @@ describe("parseUpdate: append, threads, replies to the bot", () => {
     ["voice note reply -> thread with a marker",
       () => msg(undefined, { voice: { file_id: "v" }, reply_to_message: msg("hi", { message_id: 71, from: bob }) } as Partial<TgMessage>),
       { kind: "thread", text: "(voice note)" }],
-    ["sticker reply to the bot -> ignore (nothing to append)",
+    ["sticker reply to the bot -> thread with a marker (never an append), so the chain keeps going",
       () => msg(undefined, { sticker: { file_id: "st" }, reply_to_message: msg("📝 #12", { message_id: 72, from: bot }) } as Partial<TgMessage>),
-      { kind: "ignore" }],
+      { kind: "thread", replyToMessageId: 72, text: "(sticker)" }],
+    ["voice note reply to the bot's DM -> thread with a marker",
+      () => msg(undefined, { chat: dm, voice: { file_id: "v" }, reply_to_message: msg("Alice asked you", { chat: dm, message_id: 73, from: bot }) } as Partial<TgMessage>),
+      { kind: "thread", replyToMessageId: 73, text: "(voice note)" }],
   ];
   it.each(cases)("%s", (_n, m, expected) => expect(parse(m())).toMatchObject(expected));
 });

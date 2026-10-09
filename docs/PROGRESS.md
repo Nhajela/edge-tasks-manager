@@ -82,3 +82,17 @@ Reviewer findings, each checked against the code. Every fix has a failing test w
 Also: `setup-bot.mjs` registers the new commands; `/help` and `/settings` list them.
 Checks: tsc 3s, lint 9s (0 errors, 1 old warning), `pnpm test` 274 tests in 7.1s, `pnpm build` 15s, `pnpm e2e` passed in 30.8s.
 
+
+## Verify round 2
+
+Five reviewer findings, each confirmed in the code first. Every fix has a failing test written first.
+
+| # | Finding | Outcome | Why / what changed |
+|---|---------|---------|--------------------|
+| 1 | A successful status command in a thread is never stored | fixed | `onStatus` stores the command message with `addThreadMessage` before `setStatus` (shared with the forbidden path). A reply to `/waiting need quote` now chains to the request. |
+| 2 | Status commands and `@bot @bob` have no redelivery dedupe | fixed | Thread path: if the command message is already stored, return `status.duplicate` (no audit row, no ping, no reply). Explicit `/done 12`: same status and no note means `status.unchanged`, with no audit row or notifications (one repeat reply, like the DM buttons). `onPrompt`: a prompt already made from this chat + message returns `prompt.duplicate` (new `prompts.findBySource`). |
+| 3 | Media-only replies to the bot's own messages are dropped | fixed | `parseUpdate` turns a reply to the bot with no text/photo/document into a `thread` intent with the media marker ("(sticker)", "(voice note)"). It never becomes a `pending-reply`, so a placeholder can't claim a prompt or append to the body. |
+| 4 | Anyone can claim another person's "What should @bob do?" prompt | fixed | `prompts.consume` only matches when the replier is the prompt's requester. Others replying to a live prompt get `prompt.not-requester` (silent, nothing stored); the requester can still answer. |
+| 5 | Web visits flip `started_bot` back to true without audit | fixed | `actorFromSession` upserts only when the person does not exist yet. Only `/start` (audited) sets it true again. |
+
+Checks: tsc 14s, lint 21s (0 errors, 1 old warning in `tokens.ts`), `pnpm test` 281 tests in 11.3s, `pnpm build` 26s, `pnpm e2e` passed in 48.5s.

@@ -44,7 +44,8 @@ export async function create(db: DbClient, actor: Actor, input: PromptInput): Pr
 
 /**
  * A reply to a prompt: claims it atomically (one statement, so a Telegram retry or a second reply gets null).
- * Returns null when there is no live prompt for that message. The caller then runs requests.create.
+ * Only the actor who mentioned the bot can claim it. Returns null otherwise or when there is no live prompt for
+ * that message. The caller then runs requests.create.
  */
 export async function consume(
   db: DbClient,
@@ -59,6 +60,7 @@ export async function consume(
       and(
         eq(pendingPrompts.chatId, input.chatId),
         eq(pendingPrompts.promptMessageId, input.promptMessageId),
+        eq(pendingPrompts.requesterId, actor.personId ?? -1),
         isNull(pendingPrompts.consumedAt),
         gt(pendingPrompts.expiresAt, now),
       ),
@@ -75,5 +77,14 @@ export async function find(db: DbClient, chatId: number, promptMessageId: number
     .select()
     .from(pendingPrompts)
     .where(and(eq(pendingPrompts.chatId, chatId), eq(pendingPrompts.promptMessageId, promptMessageId)));
+  return row ?? null;
+}
+
+/** The prompt a "@bot @bob" message already produced (a Telegram redelivery must not ask twice). */
+export async function findBySource(db: DbClient, chatId: number, sourceMessageId: number): Promise<PendingPrompt | null> {
+  const [row] = await db
+    .select()
+    .from(pendingPrompts)
+    .where(and(eq(pendingPrompts.chatId, chatId), eq(pendingPrompts.sourceMessageId, sourceMessageId)));
   return row ?? null;
 }

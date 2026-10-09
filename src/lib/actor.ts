@@ -26,7 +26,8 @@ export const aiActor = (label = "AI titler"): Actor => ({ kind: "ai", personId: 
 export async function actorFromSession(db: DbClient, session: Session): Promise<{ actor: Actor; person: Person }> {
   let person = await people.findByTelegramId(db, session.telegramId);
   // usernames come only from Telegram updates: a 60-day cookie's username may since belong to someone else
-  if (!person || !person.startedBot)
+  // only a new row starts as DM-able: a notifier 403 (audited started_bot=false) is undone by /start, not a web visit
+  if (!person)
     person = await people.upsertFromTelegram(db, systemActor(), { telegramId: session.telegramId, firstName: session.firstName, startedBot: true });
   return { actor: personActor(person, { via: "web" }), person };
 }

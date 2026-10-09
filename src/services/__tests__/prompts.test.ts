@@ -23,6 +23,8 @@ describe("pending mention prompts", () => {
     });
     expect(p.expiresAt.getTime()).toBe(now.getTime() + 3600_000);
 
+    // verify round 2: only the person who mentioned the bot can claim it
+    expect(await prompts.consume(db, actorFor(bob, { via: "telegram" }), { chatId, promptMessageId: 77, now })).toBeNull();
     const got = await prompts.consume(db, actor, { chatId, promptMessageId: 77, now: new Date(now.getTime() + 60_000) });
     expect(got).toMatchObject({ requesterId: alice.id, assigneeId: bob.id, sourceMessageId: 76 });
     // second reply / Telegram retry: already used
