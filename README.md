@@ -14,20 +14,31 @@ More in [docs/screenshots/final/](docs/screenshots/final/) (390px and 1280px).
 
 ## Bot commands
 
+<!-- commands:start -->
 | You type | What happens |
 | --- | --- |
-| `/request @ben fix the projector in the dome` | New request from you to @ben. The bot replies "📝 #12 for @ben: …" with a dashboard link and DMs Ben if he has started the bot. |
-| `/request get more chairs for the talk` | No @person: the request goes to the organiser (superadmin). |
-| Reply to someone's message with `/request` | They asked, you take it on: requester = the author, assignee = you. Their text and photo become the request. |
-| Reply with `/request @ben two 20L cans please` | Their message goes to @ben. Your extra text is added as a note. |
-| `@EdgeTasksBot @ben bring extension cords` | Same as `/request`, if the bot mention comes first. "thanks @EdgeTasksBot" is ignored. |
-| `@EdgeTasksBot @ben` (nothing else) | The bot asks "What should @ben do?". Reply to that with the details. |
-| Photo with caption `/request @ben the shelf fell off` | The photo is attached to the request. |
-| Reply to a message with `/append` (or `/add`, `/more`) | Adds that message to its author's latest open request. `/append 12` picks #12. |
-| Plain reply to the bot's "#12 for @ben" message | Added to #12. |
-| `/mine` · `/raised` · `/with @ben` | Your open requests: to you, from you, between you and Ben. |
-| `/status 12` · `/done 12` | One request's status · mark it done (assignee, requester or admin). |
-| `/start` · `/help` | Log in to the dashboard · the cheat sheet. |
+| `/request @bob <what>` | Ask @bob for something. Without an @name it goes to the organiser. The bot confirms with “📝 #12 for @bob”. |
+| `@EdgeTasksBot @bob <what>` | Same as /request. The bot mention must be the first thing in the message; a “thanks @EdgeTasksBot” later in a sentence does nothing. |
+| `@EdgeTasksBot @bob (no text)` | The bot asks “What should @bob do? Reply to this message with the details.” Your reply becomes the request. Expires in an hour. |
+| `Reply + /request` | Turns their message into a request from them to you. Add @bob to hand it to bob; extra text becomes a note. Photos come along. |
+| `/append (/add, /more)` | Reply to a message to add it to that person's latest open request. /append 12 picks a request. Replying to the bot's “#12” message, /append &lt;text> adds the text. The only way to change what was asked; plain replies go to the thread. |
+| `/doing` | Mark Doing. Reply to any message of the request (no id needed), or give the id. “@EdgeTasksBot on it” does the same. |
+| `/waiting <reason>` | Mark Waiting; the reason becomes the label people see. |
+| `/done <note>` | Mark Done; the requester is told. Reply in the thread, or /done 12 &lt;note> from anywhere. The note is the deliverable; send it with a photo or file, or reply to one, and that message is delivered too. The requester or an admin can close it on the assignee's behalf; then the assignee is told. |
+| `@EdgeTasksBot done <note>` | Same as /done, by mention. “@EdgeTasksBot on it” is /doing. |
+| `done (plain reply)` | Just a thread message; people say “done” in conversation. If the assignee replies exactly “done” or “✅”, the bot offers a one-tap “Mark #12 done?” button. |
+| `/decline <reason>` | Say no, with a reason. The requester is told (or the assignee, if the requester declines it for them). |
+| `/reopen` | Back to Open. Clears the ✅ Delivered card; the old messages stay in the thread. |
+| `/mine` | Open requests for you: Act, then New, then Upcoming. Max 10. |
+| `/raised` | Open requests you asked for, overdue first. |
+| `/with @bob` | Everything open between you and @bob, in two blocks: what @bob asked you, then what you asked @bob. |
+| `/status 12` | One request: title, status, due, who asked whom. |
+| `/help` | This list, inside Telegram. |
+| `/start` | Message the bot once so it can message you back. Also finishes a web login. |
+<!-- commands:end -->
+
+Generated from `src/components/landing/tutorial-content.ts` (also the landing tutorial and the bot's /help): edit
+there, then run `node scripts/readme-commands.mjs`.
 
 ### Reply threads
 
