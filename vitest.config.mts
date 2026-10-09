@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
-const DB_TESTS = ["src/services/__tests__/**/*.test.ts", "tests/db/**/*.test.ts"];
+const DB_TESTS = ["src/services/__tests__/**/*.test.ts", "tests/db/**/*.test.ts", "src/lib/bot/__tests__/handlers.test.ts"];
 
 export default defineConfig({
   resolve: {
