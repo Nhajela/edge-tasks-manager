@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Column, Mark } from "@/components/bits";
 import { CommandBubble } from "@/components/EmptyState";
 import { LoginButton } from "@/components/LoginButton";
+import { Tutorial } from "@/components/landing/Tutorial";
 import { safeNext } from "@/lib/links";
 import { getSession } from "@/lib/session";
 
@@ -13,8 +14,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ n
   const { next } = await searchParams;
   if (await getSession()) redirect(next ? safeNext(next) : "/inbox");
   return (
-    <main className="flex flex-1 items-center py-10 sm:py-16">
-      <Column wide className="grid items-center gap-10 md:grid-cols-[1.1fr_1fr] md:gap-14">
+    <main className="flex flex-1 flex-col">
+      <Column wide className="grid items-center gap-10 py-10 sm:py-16 md:grid-cols-[1.1fr_1fr] md:gap-14">
         <div className="flex flex-col gap-5">
           <div className="flex items-center gap-2">
             <Mark size={30} />
@@ -48,6 +49,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ n
           </ul>
         </div>
       </Column>
+      <div className="border-t border-line-soft">
+        <Tutorial bot={BOT} />
+      </div>
     </main>
   );
 }
