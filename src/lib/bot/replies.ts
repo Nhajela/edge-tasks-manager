@@ -23,9 +23,10 @@ export const prompt = (assignee: Person | null) => `What should ${name(assignee)
 
 export const done = (r: Request) => `✅ #${r.id} is done: <b>${esc(r.title)}</b>`;
 
-/** After /done /doing /waiting /decline /reopen. */
-export const statusSet = (r: Request) =>
-  r.status === "done" ? done(r) : `#${r.id} is now ${esc(r.customStatus || STATUS_LABEL[r.status])}: <b>${esc(r.title)}</b>`;
+/** After /done /doing /waiting /decline /reopen. `behalf`: someone other than the assignee closed it. */
+export const statusSet = (r: Request, behalf?: { by: Person | null; assignee: Person | null }) =>
+  (r.status === "done" ? done(r) : `#${r.id} is now ${esc(r.customStatus || STATUS_LABEL[r.status])}: <b>${esc(r.title)}</b>`) +
+  (behalf ? `\nClosed by ${name(behalf.by)} on behalf of ${name(behalf.assignee)}.` : "");
 
 export const cantChange = (r: Request, requester: Person | null, assignee: Person | null) =>
   `Only ${name(assignee)} or ${name(requester)} can change #${r.id}.`;

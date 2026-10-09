@@ -108,7 +108,7 @@ export type Intent =
   /**
    * Plain reply (no command) to one of the bot's own messages. Handler order: prompts.consume (a "What should
    * @bob do?" prompt -> create the request with this text as body); else the bot message belongs to a request ->
-   * append (SPEC: replying to the "#12 created" confirmation appends); else ignore.
+   * thread (SPEC: even a reply to the "#12 created" confirmation; only /append appends); else ignore.
    */
   | ({ kind: "pending-reply"; botMessageId: number; text: string; attachments: AttachmentInput[] } & MessageCtx)
   /** `@bot @bob` with no text and no reply: ask "What should @bob do?" and create a pending prompt. */

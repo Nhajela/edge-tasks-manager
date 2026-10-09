@@ -77,7 +77,8 @@ export function decide(
     const label = escapeHtml(event.customStatus || STATUS_LABEL[event.status].toLowerCase());
     const icon = event.status === "done" ? "✅" : event.status === "declined" ? "🚫" : "🔄";
     const resultNote = event.result?.note && event.result.note !== event.note ? `\n📦 ${quote(event.result.note)}` : "";
-    line = `${icon} ${tag} is ${event.status === "done" ? "done" : label}: <b>${title}</b>${event.note ? `\n${by}: ${quote(event.note)}` : ""}${resultNote}`;
+    const behalf = closedByOther ? `\nClosed by ${by} on behalf of you.` : "";
+    line = `${icon} ${tag} is ${event.status === "done" ? "done" : label}: <b>${title}</b>${behalf}${event.note ? `\n${by}: ${quote(event.note)}` : ""}${resultNote}`;
     photo = event.result?.photo;
     groupWorthy = event.status === "done" || event.status === "declined";
   } else {
