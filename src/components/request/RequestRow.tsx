@@ -97,7 +97,7 @@ export function RequestRow({
             </>
           ) : (
             <>
-              {showStatus && <StatusPill status={item.status} customStatus={item.customStatus} className="min-w-0 !shrink" />}
+              {showStatus && <StatusPill status={item.status} customStatus={item.customStatus} className={item.customStatus ? "min-w-0 !shrink" : undefined} />}
               {due && item.dueAt && (
                 <time
                   dateTime={item.dueAt.toISOString()}

@@ -384,8 +384,8 @@ export type SetStatusInput = {
 };
 
 /**
- * Status change, one audit row. Done records the deliverable (result_* columns); any other status clears the highlighted
- * result (the audit row of the done keeps it). Closing by someone other than the assignee is "on behalf of" them.
+ * Status change, one audit row. Done records the deliverable (result_* columns); leaving done/declined clears the
+ * highlighted result (the audit row of the done keeps it). Closing by someone other than the assignee is "on behalf of" them.
  */
 export async function setStatus(db: DbClient, actor: Actor, id: number, input: SetStatusInput): Promise<Result & { duplicate?: boolean }> {
   if (!STATUSES.includes(input.status)) throw new ValidationError("Unknown status.", { status: input.status });
@@ -431,6 +431,8 @@ export async function setStatus(db: DbClient, actor: Actor, id: number, input: S
     !result?.note &&
     (result?.messageId ?? null) === (before.resultMessageId ?? null) &&
     (before.status === "done" || before.resultMessageId != null);
+  // only leaving a closed state clears the highlighted card; a ⭐ picked while open survives Doing/Waiting
+  const untouched = keepResult || (input.status !== "done" && !CLOSED.includes(before.status));
   const now = new Date();
   const [request] = await db
     .update(requests)
@@ -438,7 +440,7 @@ export async function setStatus(db: DbClient, actor: Actor, id: number, input: S
       status: input.status,
       customStatus,
       doneAt: closed ? (before.doneAt ?? now) : null,
-      ...(keepResult
+      ...(untouched
         ? {}
         : {
             resultNote: result?.note ?? null,

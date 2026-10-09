@@ -185,3 +185,14 @@ Review findings checked one by one. Each real one got a failing test first, then
 Checks: tsc clean, lint clean, `pnpm test` 365 tests in 9.7s, `pnpm build` passes (26s), `SHOTS=1 pnpm e2e` passed in 79.4s (screenshots took 46s of that). Final screenshots in `docs/screenshots/final/` at 390 and 1280: landing, inbox, raised, detail-delivered, detail-thread, with, admin, settings, context. `detail-with-thread` and `admin-activity` were replaced. Git history scanned for secrets: none found.
 
 Still open: the Done-sheet clipping fix is checked by build only, with no fresh screenshot. Older audit rows can still say "on behalf of" for a reopen.
+
+## Round 2 verify 2 (2026-10-09)
+
+| # | Finding | Outcome |
+|---|---------|---------|
+| 1 | A ⭐ picked while the request was open was wiped by Doing, Waiting, the DM "On it" button or Undo, so the later Done had an empty Delivered card | Fixed in `setStatus`. The result columns are now cleared only when the request leaves done or declined (SPEC: "Reopening … clears the highlighted card"). Test: ⭐ → Doing → Waiting → Done keeps it, and Done → Doing still clears it |
+| 2, 3 | When an admin who was neither the requester nor the assignee closed a request, only the assignee was told | `decide()` now tells the assignee (with the on-behalf line) and also the requester (the normal line), unless the requester did the closing. Each one gets a DM or the group fallback, there is at most one group reply, and nobody is told twice when the requester is also the assignee |
+| 4 | Activity showed "AI titler AI skipped/failed" | `Timeline` now has a `request.ai` case: "kept the original title", "checked the title", "asked: …" or "got its question answered". The audit row stays because every mutation writes one row |
+| 5 | On a phone the status pill shrank to "Doi…" | Only a custom label can shrink now. Built-in names stay full width (checked in `inbox-390.png`) |
+
+Checks: tsc clean, lint clean, `pnpm test` 368 tests in 11.7s, `pnpm build` passes (30s), `SHOTS=1 pnpm e2e` passed in 72.7s. Two earlier e2e runs failed on steps these changes don't touch ("/admin/activity shows each step", then a 30s wait on "inbox lists the request"). They look flaky. Screenshots were refreshed at 390 and 1280. Git history scanned for secrets: none found.

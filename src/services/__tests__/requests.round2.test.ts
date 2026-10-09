@@ -76,11 +76,14 @@ describe("setStatus: in-thread status messages and the deliverable", () => {
     expect(row.data).toMatchObject({ onBehalfOf: assignee.id });
     expect(notes(res.effects).map((m) => m.chatId)).toEqual([assignee.telegramId]);
 
-    // an admin closing: still the assignee who hears about it
+    // an admin closing: the assignee hears it was on their behalf, and the requester still hears it's closed
     const admin = await makePerson(db, { startedBot: true });
     const r2 = await makeRequest(db, { requester, assignee });
     const byAdmin = await requests.setStatus(db, actorFor(admin, { isAdmin: true }), r2.request.id, { status: "declined" });
-    expect(notes(byAdmin.effects).map((m) => m.chatId)).toEqual([assignee.telegramId]);
+    const sent = notes(byAdmin.effects);
+    expect(sent.map((m) => m.chatId)).toEqual([assignee.telegramId, requester.telegramId]);
+    expect(sent[0].html).toContain("on behalf of you");
+    expect(sent[1].html).not.toContain("on behalf");
 
     // the assignee's own status change has no onBehalfOf
     const r3 = await makeRequest(db, { requester, assignee });
@@ -198,5 +201,29 @@ describe("round 2 verify 1", () => {
     expect(n).toMatchObject({ kind: "group_fallback", chatId: request.chatId });
     expect(n).not.toHaveProperty("photo");
     expect(n.html).not.toContain("invoice");
+  });
+});
+
+describe("round 2 verify 2", () => {
+  it("a ⭐ chosen while open survives Doing/Waiting and shows on the later Done", async () => {
+    const { request, assignee } = await makeRequest(db);
+    const [orig] = (await requests.getDetail(db, systemActor(), request.id)).messages;
+    await requests.markDeliverable(db, actorFor(assignee), request.id, orig.id);
+    const doing = await requests.setStatus(db, actorFor(assignee), request.id, { status: "in_progress" });
+    expect(doing.request.resultMessageId).toBe(orig.id);
+    await requests.setStatus(db, actorFor(assignee), request.id, { status: "waiting", customStatus: "quote" });
+    const done = await requests.setStatus(db, actorFor(assignee), request.id, { status: "done" });
+    expect(done.request).toMatchObject({ resultMessageId: orig.id, resultById: assignee.id });
+    // leaving done still clears the highlighted card
+    const reopened = await requests.setStatus(db, actorFor(assignee), request.id, { status: "in_progress" });
+    expect(reopened.request.resultMessageId).toBeNull();
+  });
+
+  it("an admin closing a request where the requester is the assignee tells them once", async () => {
+    const asha = await makePerson(db, { startedBot: true });
+    const admin = await makePerson(db);
+    const { request } = await makeRequest(db, { requester: asha, assignee: asha });
+    const res = await requests.setStatus(db, actorFor(admin, { isAdmin: true }), request.id, { status: "done" });
+    expect(notes(res.effects).map((m) => m.chatId)).toEqual([asha.telegramId]);
   });
 });

@@ -4,7 +4,7 @@ import { displayName } from "@/lib/names";
 import type { AuditEntry, Person, Status } from "@/lib/types";
 
 /** One line per audit row; comments get their text as a bubble. */
-function describe(e: AuditEntry, assignee?: Person): string {
+export function describe(e: AuditEntry, assignee?: Person): string {
   const d = (e.data ?? {}) as Record<string, unknown>;
   switch (e.action) {
     case "request.create":
@@ -29,6 +29,10 @@ function describe(e: AuditEntry, assignee?: Person): string {
       return "marked a message as the deliverable";
     case "request.seen":
       return "opened it";
+    case "request.ai":
+      if (typeof d.aiQuestion === "string" && d.aiQuestion) return `asked: ${d.aiQuestion}`;
+      if (d.aiStatus === "done") return "checked the title";
+      return d.aiStatus ? "kept the original title" : "got its question answered";
     case "request.bot_confirm":
       return "posted the bot confirmation in Telegram";
     default:
