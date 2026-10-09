@@ -143,6 +143,10 @@ original replied-to message (source), any appended message, the bot's confirmati
 the thread — so replies to replies, at any depth, land in the same thread. Store `reply_to_message_id` on each
 thread message so the UI can show a small "↳ replying to <name>: <snippet>" quote above nested replies (flat
 chronological list, not indented trees, so it stays readable on a phone).
+Rule (transitive): a message belongs to request R if it IS one of R's messages (source, command, appended, bot
+confirmation/DM prompts, thread) or it replies to a message that belongs to R. Since every captured message is stored,
+any chain of replies that leads back to the request works, however long. Lookup is one indexed query on
+(chat_id, message_id) per hop because each hop is stored as it arrives.
 Example that must work (and be a test): bot confirms #12 → Asha replies to it → Ben replies to Asha → Asha replies to
 Ben → Chitra replies to Ben's message → all four are in #12's thread, in order, each showing who they answered. Store these in `request_messages` with kind `thread` (text/caption,
 author, link, photos as attachments) and an audit row `request.thread`. They do NOT change the request body
