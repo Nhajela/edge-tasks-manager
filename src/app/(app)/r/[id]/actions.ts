@@ -7,6 +7,7 @@ import { runEffects } from "@/lib/effects";
 import type { ActionResult, Priority, Status } from "@/lib/types";
 import { getViewer } from "@/lib/viewer";
 import { errorMessage } from "@/services/errors";
+import * as notes from "@/services/notes";
 import * as requests from "@/services/requests";
 import type { Actor, Effect } from "@/services/types";
 
@@ -55,4 +56,13 @@ export async function setDueAction(id: number, day: string): Promise<ActionResul
 
 export async function commentAction(id: number, text: string, notify: boolean): Promise<ActionResult> {
   return run(id, (a) => requests.comment(db(), a, id, { text, notify }));
+}
+
+export async function setBodyAction(id: number, body: string): Promise<ActionResult> {
+  return run(id, (a) => requests.setBody(db(), a, id, body));
+}
+
+/** My private note; "" clears it. */
+export async function setNoteAction(id: number, text: string): Promise<ActionResult> {
+  return run(id, async (a) => ({ note: await notes.set(db(), a, id, text) }));
 }

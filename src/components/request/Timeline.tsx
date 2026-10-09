@@ -17,6 +17,8 @@ export function describe(e: AuditEntry, assignee?: Person): string {
       return d.notify ? "commented (told them on Telegram)" : "commented";
     case "request.title":
       return `renamed it “${e.summary}”`;
+    case "request.body":
+      return "edited the description";
     case "request.priority":
       return `set ${e.summary.toLowerCase()}`;
     case "request.due":

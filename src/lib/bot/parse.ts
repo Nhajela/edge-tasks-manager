@@ -149,6 +149,11 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
 
     if (name === "request") return requestIntent(c, "command", after);
     if (SILENT_REQUEST.includes(name)) return requestIntent(c, "command", after, { silent: true, forMe: name === "new_request_for_me" });
+    if (name === "note") {
+      // same id rule as status commands: in a thread a leading number is part of the note
+      const { id, rest } = !reply || /^#\d+\b|^\d+$/.test(args) ? parseId(args) : { id: null, rest: args };
+      return { kind: "note", requestId: id, replyToMessageId: reply?.message_id ?? null, text: rest, ...c };
+    }
     if (name === "log") return { kind: "log", source: reply && !reply.from?.is_bot ? reply : null, ...c };
     // /start logs you in and marks you DM-able: only meaningful in a DM with the bot
     if (name === "start") return message.chat.type === "private" ? { kind: "start", code: args.split(/\s+/)[0] || null, ...c } : ignore("start outside DM");

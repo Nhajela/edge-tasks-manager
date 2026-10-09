@@ -101,6 +101,8 @@ export type Intent =
    * that thread; else a new request (replied author asks, sender does it). `source` null -> usage, by DM.
    */
   | ({ kind: "log"; source: TgMessage | null } & MessageCtx)
+  /** /note <text> in a request's thread (or /note 12 <text>): adds to my private note, quietly */
+  | ({ kind: "note"; requestId: number | null; replyToMessageId: number | null; text: string } & MessageCtx)
   /** a message forwarded to the bot in private: the bot asks "new request, or add to one?" (replying to the forward) */
   | ({ kind: "forward" } & MessageCtx)
   /** a tap on that question: `message` is the question, its reply_to_message the forward (so no stored state) */

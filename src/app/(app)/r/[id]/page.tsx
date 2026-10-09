@@ -6,7 +6,7 @@ import { AiQuestionCard } from "@/components/request/AiQuestionCard";
 import { CommentBox } from "@/components/request/CommentBox";
 import { Delivered } from "@/components/request/Delivered";
 import { MarkDeliverableButton, type PickMessage } from "@/components/request/DoneSheet";
-import { DueEditor, LockedHint, PriorityEditor, TitleEditor } from "@/components/request/Editors";
+import { DueEditor, LockedHint, PriorityEditor, TextBlockEditor, TitleEditor } from "@/components/request/Editors";
 import { DueLabel } from "@/components/request/DueLabel";
 import { MessageCard } from "@/components/request/MessageCard";
 import { PersonChip } from "@/components/request/PersonChip";
@@ -18,9 +18,21 @@ import { displayName } from "@/lib/names";
 import { requireViewer } from "@/lib/viewer";
 import { NotFoundError, PermissionError } from "@/services/errors";
 import { canManage } from "@/services/permissions";
+import * as notes from "@/services/notes";
+import * as people from "@/services/people";
 import * as requests from "@/services/requests";
 import type { DetailMessage } from "@/services/requests";
-import { commentAction, doneAction, markDeliverableAction, setDueAction, setPriorityAction, setStatusAction, setTitleAction } from "./actions";
+import {
+  commentAction,
+  doneAction,
+  markDeliverableAction,
+  setBodyAction,
+  setDueAction,
+  setNoteAction,
+  setPriorityAction,
+  setStatusAction,
+  setTitleAction,
+} from "./actions";
 
 export const metadata: Metadata = { title: "Request" };
 
@@ -61,6 +73,12 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
     .filter((m) => m.kind !== "status")
     .map((m) => ({ id: m.id, name: displayName(m.from), snippet: m.text.replace(/\s+/g, " ").trim().slice(0, 80), media: media(m) }));
   const manage = canManage(actor, r);
+  // SPEC "Private notes": mine, plus everyone else's for admins
+  const [myNote, otherNotes] = await Promise.all([
+    notes.getMine(db(), actor, id),
+    actor.isAdmin ? notes.listAll(db(), actor, id).then((ns) => ns.filter((n) => n.personId !== me.id)) : [],
+  ]);
+  const noteAuthors = otherNotes.length ? await people.getMany(db(), otherNotes.map((n) => n.personId)) : [];
   const star = manage
     ? (m: DetailMessage) => (
         <MarkDeliverableButton current={r.resultMessageId === m.id} done={r.status === "done"} onMark={markDeliverableAction.bind(null, id, m.id)} />
@@ -97,6 +115,18 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
         assignee={assignee}
       />
 
+      <Section title="Description">
+        <TextBlockEditor
+          key={r.body}
+          id="description"
+          label="Description"
+          value={r.body}
+          empty="No description."
+          hint="The original Telegram messages below stay as they were."
+          onSave={manage ? setBodyAction.bind(null, id) : undefined}
+        />
+      </Section>
+
       <AiQuestionCard requestId={r.id} question={r.aiQuestion} canAnswer={actor.isAdmin} />
 
       <Section title="Status">
@@ -118,15 +148,13 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
         </Section>
       </div>
 
-      <Section title={original.length > 1 ? "Messages" : "Message"}>
-        {original.length ? (
-          original.map((m) => <MessageCard key={m.id} message={m} attachments={attachments} action={star?.(m)} />)
-        ) : (
-          <p className="whitespace-pre-wrap break-words rounded-[var(--radius-card)] border border-line-soft p-3.5 text-[15px] leading-6">
-            {r.body || "No message."}
-          </p>
-        )}
-      </Section>
+      {original.length > 0 && (
+        <Section title="From Telegram">
+          {original.map((m) => (
+            <MessageCard key={m.id} message={m} attachments={attachments} action={star?.(m)} />
+          ))}
+        </Section>
+      )}
 
       {thread.length > 0 && (
         <Section title={`Thread · ${thread.filter((m) => m.kind === "thread").length}`}>
@@ -146,7 +174,28 @@ export default async function RequestPage({ params }: { params: Promise<{ id: st
         <Timeline entries={timeline} assignee={assignee} />
       </Section>
 
-      <Section title="Comment">
+      <Section title="Private note" aside={<span className="font-normal normal-case tracking-normal">· only you and admins can see it</span>}>
+        <TextBlockEditor
+          key={myNote ?? ""}
+          id="note"
+          label="Private note"
+          value={myNote ?? ""}
+          empty="Jot something only you need to remember. Tap the pencil."
+          allowEmpty
+          hint="Nobody gets pinged. Empty it to delete."
+          onSave={setNoteAction.bind(null, id)}
+        />
+        {otherNotes.map((n) => (
+          <div key={n.id} className="rounded-[var(--radius-card)] border border-dashed border-line p-3.5 text-[14.5px]">
+            <p className="mb-1 text-[12.5px] text-ink-mute">
+              {displayName(noteAuthors.find((p) => p.id === n.personId) ?? null)}&apos;s private note (you see it as an admin)
+            </p>
+            <p className="whitespace-pre-wrap break-words leading-6">{n.text}</p>
+          </div>
+        ))}
+      </Section>
+
+      <Section title="Comment" aside={<span className="font-normal normal-case tracking-normal">· everyone on the request sees it</span>}>
         <CommentBox tellName={tellName} onSend={commentAction.bind(null, id)} />
       </Section>
 

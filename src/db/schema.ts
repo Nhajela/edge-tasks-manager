@@ -297,3 +297,19 @@ export const chatBuffer = pgTable(
   },
   (t) => [uniqueIndex("chat_buffer_chat_message").on(t.chatId, t.messageId), index("chat_buffer_created").on(t.createdAt)],
 );
+
+/**
+ * One private note per person per request (SPEC "Private notes"): only that person and admins can read it. Audited
+ * as entity "note" without the text, so it never shows on the request's timeline.
+ */
+export const privateNotes = pgTable(
+  "private_notes",
+  {
+    id: serial().primaryKey(),
+    requestId: integer("request_id").notNull().references(() => requests.id, { onDelete: "cascade" }),
+    personId: integer("person_id").notNull().references(() => people.id),
+    text: text().notNull(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [unique("private_notes_request_person").on(t.requestId, t.personId)],
+);

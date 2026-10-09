@@ -269,6 +269,14 @@ describe("parseUpdate: silent commands", () => {
   });
 });
 
+describe("parseUpdate: /note", () => {
+  it("in a thread the text is the note (even a leading number); /note 12 text from anywhere", () => {
+    const r = msg("photo", { message_id: 40 });
+    expect(parse(msg("/note 3 spare cables in the van", { reply_to_message: r }))).toMatchObject({ kind: "note", requestId: null, replyToMessageId: 40, text: "3 spare cables in the van" });
+    expect(parse(msg("/note #12 call the vendor"))).toMatchObject({ kind: "note", requestId: 12, replyToMessageId: null, text: "call the vendor" });
+  });
+});
+
 describe("parseUpdate: forwards to the bot's DM", () => {
   const fwd = (origin: object, extra: Partial<TgMessage> = {}) => msg("can we have a place to message people", { chat: dm, forward_origin: origin, ...extra } as Partial<TgMessage>);
   it("a forward in private asks first; forwards in groups are ignored", () => {

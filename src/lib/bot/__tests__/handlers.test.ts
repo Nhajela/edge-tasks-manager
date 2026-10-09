@@ -9,6 +9,7 @@ import type { Person } from "@/lib/types";
 import * as audit from "@/services/audit";
 import * as botMessages from "@/services/botMessages";
 import * as chatBuffer from "@/services/chatBuffer";
+import * as notes from "@/services/notes";
 import * as requests from "@/services/requests";
 import type { AttachmentInput } from "@/services/requests";
 import type { Effect } from "@/services/types";
@@ -826,6 +827,29 @@ describe("silent commands: /new_request, /new_request_for_me, /log", () => {
     const chat = group();
     const res = await t.run({ kind: "log", source: null, ...ctx(chat, me, "/log") });
     expect(res.outcome).toBe("log.usage");
+    expect(t.sent.every((m) => m.chatId === me.telegramId)).toBe(true);
+  });
+});
+
+describe("/note: a private note from Telegram", () => {
+  it("adds to my private note on the thread's request, quietly: DM only, command deleted, nothing on the timeline", async () => {
+    const t = setup();
+    const me = await makePerson(db, { startedBot: true });
+    const chat = group();
+    const { request: r } = await makeRequest(db, { assignee: me, chatId: chat.id, messageId: 4242 });
+    const c = ctx(chat, me, "/note vendor says Monday");
+    const res = await t.run({ kind: "note", requestId: null, replyToMessageId: 4242, text: "vendor says Monday", ...c });
+    expect(res).toMatchObject({ outcome: "note.added", requestId: r.id });
+    expect(await notes.getMine(db, actorFor(me), r.id)).toBe("vendor says Monday");
+    expect(t.sent.map((m) => m.chatId)).toEqual([me.telegramId]);
+    expect(t.calls.filter((x) => x.method === "deleteMessage")).toHaveLength(1);
+    expect((await audit.listForEntity(db, "request", r.id)).some((a) => a.action.startsWith("note"))).toBe(false);
+  });
+  it("no request found or no text: usage by DM", async () => {
+    const t = setup();
+    const me = await makePerson(db, { startedBot: true });
+    const res = await t.run({ kind: "note", requestId: null, replyToMessageId: null, text: "hello", ...ctx(group(), me, "/note hello") });
+    expect(res.outcome).toBe("note.usage");
     expect(t.sent.every((m) => m.chatId === me.telegramId)).toBe(true);
   });
 });

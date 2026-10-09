@@ -571,6 +571,17 @@ export async function setDue(db: DbClient, actor: Actor, id: number, dueAt: Date
   return setField(db, actor, id, "dueAt", dueAt, dueAt ? `Due ${dueAt.toISOString()}` : "No due date");
 }
 
+/** The description (the body). The requester, the assignee or an admin; the original Telegram messages stay as they were. */
+export async function setBody(db: DbClient, actor: Actor, id: number, body: string): Promise<Result> {
+  const text = requireText(body, "Description", TEXT_LIMITS.body);
+  const before = await load(db, id);
+  requireManage(actor, before);
+  if (text === before.body) return { request: before, effects: [] };
+  const [request] = await db.update(requests).set({ body: text, updatedAt: new Date() }).where(eq(requests.id, id)).returning();
+  await audit.record(db, actor, { action: "request.body", entityType: "request", entityId: id, summary: "Edited the description", data: { from: before.body, to: text } });
+  return { request, effects: [] };
+}
+
 /** The titler's bookkeeping: ai_status and its open question. */
 export async function setAiState(
   db: DbClient,

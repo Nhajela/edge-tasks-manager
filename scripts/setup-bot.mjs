@@ -33,6 +33,7 @@ await call("setMyCommands", {
     { command: "log", description: "Reply to a message: quietly track it, only you are told" },
     { command: "new_request", description: "Like /request, but quiet: only you get a confirmation" },
     { command: "new_request_for_me", description: "Reply to a message: quietly make it a request for you" },
+    { command: "note", description: "In a request's thread: add to your private note (only you see it)" },
     { command: "mine", description: "Open requests assigned to you" },
     { command: "raised", description: "Open requests you raised" },
     { command: "with", description: "Open requests between you and someone: /with @bob" },

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { SubmitButton } from "@/components/feedback";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { PRIORITIES } from "@/lib/constants";
 import type { ActionResult, Priority } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -112,5 +113,66 @@ export function DueEditor({ day, onSave }: { day: string; onSave: Save<string> }
         </Button>
       )}
     </div>
+  );
+}
+
+/**
+ * Long text with a pencil: the request description, or my private note. Read-only when `onSave` is missing.
+ * An empty value shows `empty` (for the note: an "Add a private note" button).
+ */
+export function TextBlockEditor({
+  id,
+  label,
+  value,
+  empty,
+  hint,
+  allowEmpty,
+  onSave,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  empty: string;
+  hint?: string;
+  allowEmpty?: boolean;
+  onSave?: Save<string>;
+}) {
+  const [editing, setEditing] = useState(false);
+  if (!editing)
+    return (
+      <div className="flex items-start gap-1.5 rounded-[var(--radius-card)] border border-line-soft p-3.5">
+        {value ? (
+          <p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[15px] leading-6">{value}</p>
+        ) : (
+          <p className="min-w-0 flex-1 text-[14.5px] text-ink-mute">{empty}</p>
+        )}
+        {onSave && (
+          <Button variant="ghost" size="icon-sm" aria-label={`Edit ${label.toLowerCase()}`} onClick={() => setEditing(true)}>
+            <Pencil />
+          </Button>
+        )}
+      </div>
+    );
+  return (
+    <form
+      action={async (fd) => {
+        const r = await onSave!(String(fd.get(id) ?? ""));
+        if (r.ok) setEditing(false);
+        else toast.error(r.error);
+      }}
+      className="flex flex-col gap-2"
+    >
+      <label htmlFor={id} className="sr-only">
+        {label}
+      </label>
+      <Textarea id={id} name={id} defaultValue={value} required={!allowEmpty} autoFocus rows={5} className="text-[15px] leading-6" />
+      <div className="flex flex-wrap items-center gap-2">
+        <SubmitButton size="sm">Save</SubmitButton>
+        <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
+        {hint && <span className="text-[12.5px] text-ink-mute">{hint}</span>}
+      </div>
+    </form>
   );
 }

@@ -161,6 +161,13 @@ export const COMMAND_ENTRIES: Entry[] = [
     help: "like /request, but quiet (…_for_me: it's yours)",
   },
   {
+    term: "/note <text>",
+    meaning:
+      "Quiet. Reply to any message of a request: adds a line to your private note on it. Only you and admins can see private notes; nobody is pinged. On the web the same note sits under Activity, and the requester or assignee can also edit the description there.",
+    example: "/note vendor says Monday",
+    help: "in a request's thread: add to your private note",
+  },
+  {
     term: "Forward to the bot",
     meaning:
       "Forward any message to the bot in private: it shows who it's from and asks “new request, or add to one?”, listing your open requests with that person first. A new one is a quiet request from its author to you. Handy for messages /log can't see (sent before the bot joined a group, or in another chat). If the author hides forwards, you're the requester and their name starts the text.",

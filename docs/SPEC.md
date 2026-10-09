@@ -214,6 +214,17 @@ as usual.
   without it the command stays). If the sender can't be DMed (never pressed Start), the bot replies in the group
   instead and keeps the command, so they know it worked.
 
+### Description + private notes
+- **Description** = `requests.body`. The requester, the assignee or an admin edits it on the web (`requests.setBody`,
+  audit `request.body`, timeline "edited the description"). The original Telegram messages stay unchanged under
+  "From Telegram"; `/append` still adds to the description.
+- **Private note** (`private_notes`, one per person per request): anyone who can see the request keeps their own.
+  Only they and admins (the superadmin) can read it; admins see others' notes on the request page, marked as such.
+  Never pings anyone. Audited as entity `note` with no text, so it never appears on the request timeline. On the
+  web: a card under Activity. In Telegram: `/note <text>` replying to any message of a request (or `/note 12 <text>`)
+  adds a line, quietly (DM to the sender, command deleted, like `/log`).
+- **Comments** are the public notes: everyone on the request sees them; "Tell @x" pings.
+
 ### Forwards to the bot's DM
 A message forwarded to the bot in private (`forward_origin`) gets a question, as a reply to the forward: "📨 From
 **Lucy (@fiatlucy)**: <preview>. New request, or add it to one?" Buttons: `🆕 New request from Lucy` (`fw:new`) and up

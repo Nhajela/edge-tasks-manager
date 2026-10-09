@@ -8,6 +8,7 @@ import type { Person, Session } from "@/lib/types";
 import { PermissionError, ServiceError, errorMessage } from "@/services/errors";
 import { requestUrl, type Notifier } from "@/services/notifications";
 import * as chatBuffer from "@/services/chatBuffer";
+import * as notes from "@/services/notes";
 import * as people from "@/services/people";
 import { groupInbox, groupRaised, type InboxBucket } from "@/services/grouping";
 import * as prompts from "@/services/prompts";
@@ -52,6 +53,8 @@ export async function handleIntent(db: DbClient, intent: Intent, deps: HandlerDe
         return await onAppend(c, intent);
       case "log":
         return await onLog(c, intent);
+      case "note":
+        return await onNote(c, intent);
       case "forward":
         return await onForward(c, intent);
       case "forward-choice":
@@ -239,6 +242,19 @@ async function onRequest(c: Ctx, i: Extract<Intent, { kind: "request" }>) {
     messages: [...(src ? [msg(src, srcAuthor?.id ?? null)] : []), msg(i.message, person.id)],
     attachments: i.attachments,
   }, { silent: i.silent, sourceMessageId: src?.message_id });
+}
+
+/** SPEC "Private notes": /note adds a line to my note on the thread's request; quiet like /log. */
+async function onNote(c: Ctx, i: Extract<Intent, { kind: "note" }>) {
+  const requestId = i.requestId ?? (i.replyToMessageId != null ? await requests.findRequestByTelegramMessage(c.db, i.chat.id, i.replyToMessageId) : null);
+  if (requestId == null || !i.text.trim()) {
+    await whisper(c, i, copy.usage.note);
+    return result("note.usage");
+  }
+  const { actor } = await sender(c, i);
+  await notes.append(c.db, actor, requestId, i.text);
+  await whisper(c, i, copy.notedPrivately(requestId), requestId);
+  return result("note.added", requestId);
 }
 
 const FORWARD_TARGETS = 4;
