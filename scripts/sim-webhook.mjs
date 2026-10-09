@@ -17,8 +17,9 @@ export const PEOPLE = {
 };
 export const CHAT = { id: -1009100000002, type: "supergroup", title: "Edge City Sim" };
 
-// Unique per run so Telegram-style dedupe on (chat_id, message_id) never swallows a re-run.
-let nextId = Math.floor(Date.now() / 1000) % 1_000_000_000;
+// Unique per run so Telegram-style dedupe on (chat_id, message_id) never swallows a re-run. Milliseconds, not
+// seconds: back-to-back runs (pnpm e2e) start within the same second and used to reuse each other's ids.
+let nextId = Date.now() % 2_000_000_000;
 
 /** Entities for every leading /command, @mention and text_mention token, the way Telegram computes them (UTF-16). */
 function entitiesFor(text, textMentions = {}) {
