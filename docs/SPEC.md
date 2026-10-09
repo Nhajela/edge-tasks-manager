@@ -140,7 +140,9 @@ Parsing rules (pure function in `src/lib/bot/parse.ts`, unit tested heavily):
 Any message from **anyone** that replies to a message tied to a request automatically becomes part of that
 request's **thread** in the web UI — no `/append` or `/add` needed. "Tied to a request" = the command message, the
 original replied-to message (source), any appended message, the bot's confirmation message, or a message already in
-the thread (so reply chains keep threading). Store these in `request_messages` with kind `thread` (text/caption,
+the thread — so replies to replies, at any depth, land in the same thread. Store `reply_to_message_id` on each
+thread message so the UI can show a small "↳ replying to <name>: <snippet>" quote above nested replies (flat
+chronological list, not indented trees, so it stays readable on a phone). Store these in `request_messages` with kind `thread` (text/caption,
 author, link, photos as attachments) and an audit row `request.thread`. They do NOT change the request body
 (that stays `/append`'s job) and do not trigger re-titling. The assignee and requester get a quiet notification only
 via the dashboard (no Telegram ping for every thread reply, to avoid spam); the request page shows the thread as a
