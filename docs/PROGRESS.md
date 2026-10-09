@@ -119,3 +119,43 @@ Shared surface for the round-2 tasks (grouping, status from anywhere, closing on
 - Notifications: done/declined by anyone but the assignee goes to the assignee. A done carries `photo: { fileId }` (the result message's first photo). `OutgoingMessage.photo` exists, but `lib/telegram.ts` does not send it yet (no sendPhoto).
 - `ListFilter.closedSince` drops done/declined items closed earlier. `services/grouping.ts` has typed stubs that throw.
 - Neon dev: `pnpm db:push` added the columns, but it left `request_messages_kind_check` at its old value (`original, append`; even `thread` was missing). drizzle-kit does not diff check bodies. I replaced it by hand. **Prod needs the same fix**: `ALTER TABLE request_messages DROP CONSTRAINT request_messages_kind_check, ADD CONSTRAINT request_messages_kind_check CHECK (kind IN ('original','append','thread','status'))`, then `scripts/migrate-status-kind.mjs` (idempotent; re-tags old in-thread status rows from their audit `messageId`).
+
+## Round 2 (2026-10-09)
+
+Implements the SPEC sections "Grouping (never mix directions)", "Status from anywhere in the thread", "Closing on someone's behalf + the deliverable", the reply-to-confirmation = thread rule, and the in-thread `status` message kind. Each task's file is under `docs/progress/r2-*.md`.
+
+| Task | Status | Notes |
+|------|--------|-------|
+| grouping | done, merged | [progress/r2-grouping.md](progress/r2-grouping.md): `groupInbox` / `groupRaised`, tiles, people strip (IST days) |
+| bot-deliverable | done, merged | [progress/r2-bot-deliverable.md](progress/r2-bot-deliverable.md): `/done` records the deliverable, on-behalf wording, sendPhoto |
+| bot-lists-mcp | done, merged | [progress/r2-bot-lists-mcp.md](progress/r2-bot-lists-mcp.md): `/mine` `/raised` `/with` and MCP `list_requests` grouped |
+| web-deliverable | done, merged | [progress/r2-web-deliverable.md](progress/r2-web-deliverable.md): Delivered card, Done sheet, ⭐ mark as deliverable, status system lines |
+| web-inbox-raised | done, merged | [progress/r2-web-inbox-raised.md](progress/r2-web-inbox-raised.md): buckets, stat tiles, people strip, 30s refresh, `markSeen` on open |
+| web-with-admin | done, merged | [progress/r2-web-with-admin.md](progress/r2-web-with-admin.md): `/with` two direction blocks, `/admin` grouped by assignee |
+| tutorial | done, merged | [progress/r2-tutorial.md](progress/r2-tutorial.md): landing tutorial + glossary; `/help` and README table from one source |
+| seed-e2e | done, merged | [progress/r2-seed-e2e.md](progress/r2-seed-e2e.md): every bucket seeded, status/deliverable sim scenarios and e2e checks |
+
+Integration:
+
+- Merged in the order above with `--no-ff`; no conflicts. tsc and `pnpm test` passed after each.
+- Seam fixes:
+  - Deleted `tests/helpers/grouping.ts` and its two `vi.mock` lines: the bot and MCP tests now run against the real grouping.
+  - One shared `components/request/Group.tsx` (caret, count, "Show N more", new optional `meta`). `/inbox`, `/raised` and `/with` render through `RowList`'s grouped view; `/admin` uses `Group` directly. Deleted `with/Group.tsx`, the `/with` try/catch fallback, and `toSections` (only `splitWith` is left in `lib/sections.ts`).
+  - Moved `tutorial-content.ts` (+ test) to `src/lib/`, so `lib/bot/replies.ts` no longer imports from `components`. README and `scripts/readme-commands.mjs` point at the new path.
+  - Lint: `ignoreRestSiblings` for `no-unused-vars` (fixes the old `_h` warning in `services/tokens.ts`); removed an unused `vi` import.
+  - e2e: groups show 5 rows, so the script opens "Show N more" before looking for a row; the seeded Delivered check compares against the original message, not the title above the card. The `/admin/activity` failure seen on e7763cb no longer happens.
+- Resolved from the round-1 list: verb-bucket grouping, status from anywhere, bot `/with` grouping, the 14-day Done limit on `/inbox`.
+
+Checks: tsc clean, lint 0 errors 0 warnings, `pnpm test` 354 tests in 8.0s, `pnpm build` passes, `pnpm e2e` passed in 26.6s.
+
+Unresolved:
+
+- **Prod schema**: the `request_messages_kind_check` fix and `scripts/migrate-status-kind.mjs` (see Round 2 contract) still have to run on prod.
+- MCP `list_requests` dropped `offset` and returns `groups` instead of `items`: any client using the old shape breaks.
+- Bot: "status unchanged" still stores the command as kind `thread` (adds one to `threadCount`).
+- `/raised` tile filters (`StatTiles.tileMatches`) copy the tile rules by hand; export a predicate from `grouping.ts` if they drift.
+- `/admin` groups only the current page of 100 rows, so counts cover that page.
+- `RequestRow` still says "from @bob" inside the "@bob asked you" block on `/with`.
+- The ⭐ deliverable is cleared if someone picks "None" in the Done sheet.
+- Seeded photos use fake Telegram file ids, so they show as blank boxes in dev.
+- `/with` has no e2e check; it was checked by build only.
