@@ -161,6 +161,12 @@ export const COMMAND_ENTRIES: Entry[] = [
     help: "like /request, but quiet (…_for_me: it's yours)",
   },
   {
+    term: "Forward to the bot",
+    meaning:
+      "Forward any message to the bot in private: it shows who it's from and asks “new request, or add to one?”, listing your open requests with that person first. A new one is a quiet request from its author to you. Handy for messages /log can't see (sent before the bot joined a group, or in another chat). If the author hides forwards, you're the requester and their name starts the text.",
+    help: "forward me a message in private: new request or add to one, you pick",
+  },
+  {
     term: "/doing",
     meaning: "Mark Doing. Reply to any message of the request (no id needed), or give the id. “@bot on it” does the same.",
     example: "/doing 12",

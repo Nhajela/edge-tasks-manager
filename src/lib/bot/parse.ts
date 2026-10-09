@@ -94,6 +94,21 @@ function statusIntent(c: MessageCtx, status: Status, args: string, reply: TgMess
   return { kind: "status", status, requestId: id, replyToMessageId: reply?.message_id ?? null, note: rest || null, attachments: attachmentsOf(c.message), replied, ...c };
 }
 
+/** Who a forwarded message is from and what it says. A hidden author (privacy setting) has only a name: it leads the body. */
+export function forwardRequest(m: TgMessage) {
+  const o = m.forward_origin;
+  const author = o?.type === "user" && !o.sender_user.is_bot ? o.sender_user : null;
+  const name = author
+    ? [author.first_name, author.username && `(@${author.username})`].filter(Boolean).join(" ")
+    : o?.type === "hidden_user"
+      ? o.sender_user_name
+      : o?.type === "chat" || o?.type === "channel"
+        ? ((o.sender_chat ?? o.chat)?.title ?? null)
+        : null;
+  const text = textOf(m).trim();
+  return { author, name, body: author ? text : [name, text].filter(Boolean).join(": "), attachments: attachmentsOf(m) };
+}
+
 /**
  * Pure: turn a Telegram update into an Intent (SPEC "Telegram bot" parsing rules). No DB, no network.
  * Messages from bots -> ignore. The webhook route is: parseUpdate -> handleIntent -> after(runEffects(result.effects)).
@@ -121,6 +136,9 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
   const c: MessageCtx = { message, chat: message.chat, from };
   const text = textOf(message);
   const reply = replyOf(message);
+
+  // SPEC "Forwards": a message forwarded to the bot in private -> ask "new request, or add to one?"
+  if (message.forward_origin && message.chat.type === "private") return { kind: "forward", ...c };
 
   const cmd = /^\/([A-Za-z0-9_]+)(?:@([A-Za-z0-9_]+))?(?=\s|$)/.exec(text);
   if (cmd) {

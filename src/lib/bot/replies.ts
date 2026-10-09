@@ -83,11 +83,17 @@ export const usage = {
   status: "Which request? E.g. <code>/status 12</code>",
   done: "Reply to a request message, or use <code>/done 12</code>.",
   // a reply to a message from before the bot joined arrives with no reply info, so this also covers "I did reply"
-  log: "Reply to someone's message with /log and I'll quietly track it for you.\n\nIf you did reply: I can't see messages sent before I was added to that group, so Telegram doesn't tell me which one you meant. /log works on anything sent after I joined.",
+  log: "Reply to someone's message with /log and I'll quietly track it for you.\n\nIf you did reply: I can't see messages sent before I was added to that group, so Telegram doesn't tell me which one you meant. Forward that message to me in private instead and I'll ask whether it's a new request or part of one.",
 };
 
 /** Silent commands (/log, /new_request…): only the sender hears, by DM. */
 export const logged = (id: number) => `🤫 Logged quietly as #${id}. Nobody else was told.`;
+export const forwardAsk = (name: string | null, known: boolean, preview: string) =>
+  `📨 From <b>${esc(name ?? "someone")}</b>${known ? "" : " (they hide forwards, so you'll be the requester)"}:
+<i>${esc(preview)}</i>
+
+New request, or add it to one?`;
+export const forwardGone = "I can't find that forwarded message any more. Forward it again.";
 export const loggedTo = (id: number) => `🤫 Added to #${id} quietly.`;
 export const quietNeedsStart = "\n<i>Message me once in private (press Start) and I'll confirm quiet commands there instead.</i>";
 

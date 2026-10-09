@@ -214,6 +214,20 @@ as usual.
   without it the command stays). If the sender can't be DMed (never pressed Start), the bot replies in the group
   instead and keeps the command, so they know it worked.
 
+### Forwards to the bot's DM
+A message forwarded to the bot in private (`forward_origin`) gets a question, as a reply to the forward: "📨 From
+**Lucy (@fiatlucy)**: <preview>. New request, or add it to one?" Buttons: `🆕 New request from Lucy` (`fw:new`) and up
+to 4 of my open requests (`fw:<id>`, "➕ #12 <title>"), the ones with that person first, then newest. One question per
+forwarded message. The tap carries the question message, whose `reply_to_message` is the forward, so nothing is
+stored; the question is edited into the result.
+- New: a silent request (no DMs at creation), requester = the original author (`forward_origin.sender_user`),
+  assignee = me, body = its text/caption, photos attached. A second tap → "already #N".
+- Add to #12: `requests.append` (joins the body, like `/append`).
+- Author hidden by privacy settings (or a chat or channel): the question says so, I'm the requester, and the name
+  leads the body ("Lucy Chen: …"). Forwards in groups are ignored.
+Why: the bot can't see group messages sent before it joined, and Telegram then strips the reply from `/log`, so its
+usage hint says to forward instead.
+
 ### Message buffer (`chat_buffer`, 3 days)
 The Bot API can't read history, so the webhook stores every non-bot group message (raw JSON) for 3 days; rows older
 than that are purged (piggybacked on ~1 in 50 writes). Not domain state: no audit rows. Uses:

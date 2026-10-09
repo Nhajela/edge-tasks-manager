@@ -829,3 +829,67 @@ describe("silent commands: /new_request, /new_request_for_me, /log", () => {
     expect(t.sent.every((m) => m.chatId === me.telegramId)).toBe(true);
   });
 });
+
+describe("forwards to the bot's DM: ask, then new request or add to one", () => {
+  async function forwarded(t: ReturnType<typeof setup>, me: Person, author: Person, text: string) {
+    const dm: TgChat = { id: me.telegramId!, type: "private" };
+    const c = ctx(dm, me, text, { forward_origin: { type: "user", date: 1, sender_user: user(author) } });
+    await t.run({ kind: "forward", ...c });
+    return { c, prompt: t.sent.at(-1)! };
+  }
+  const tap = (t: ReturnType<typeof setup>, me: Person, c: MessageCtx, choice: "new" | number) =>
+    t.run({ kind: "forward-choice", choice, callbackQueryId: "cb", from: c.from, message: { message_id: 777, date: 0, chat: c.chat, reply_to_message: c.message } });
+  const edits = (t: ReturnType<typeof setup>) => t.calls.filter((x) => x.method === "editMessageText").map((x) => String(x.body.text));
+
+  it("asks, naming who it's from, with New first and my open requests with them as add targets", async () => {
+    const t = setup();
+    const lucy = await makePerson(db, { firstName: "Lucy" });
+    const me = await makePerson(db, { startedBot: true });
+    const { request: withLucy } = await makeRequest(db, { requester: lucy, assignee: me, title: "Fix the dome projector" });
+    const { request: closed } = await makeRequest(db, { requester: lucy, assignee: me, title: "Old one" });
+    await requests.setStatus(db, actorFor(me), closed.id, { status: "done" });
+    const { c, prompt } = await forwarded(t, me, lucy, "production team issue");
+    expect(prompt).toMatchObject({ chatId: me.telegramId, replyTo: c.message.message_id });
+    expect(prompt.html).toContain("Lucy");
+    const data = prompt.buttons!.map((b) => ("callback_data" in b ? b.callback_data : ""));
+    expect(data[0]).toBe("fw:new");
+    expect(data).toContain(`fw:${withLucy.id}`);
+    expect(data).not.toContain(`fw:${closed.id}`);
+    expect(prompt.buttons!.find((b) => "callback_data" in b && b.callback_data === `fw:${withLucy.id}`)!.text).toContain("Fix the dome projector");
+    expect(await requests.findRequestByTelegramMessage(db, c.chat.id, c.message.message_id)).toBeNull();
+  });
+
+  it("New: a quiet request from the original author to me; a second tap doesn't make another", async () => {
+    const t = setup();
+    const lucy = await makePerson(db);
+    const me = await makePerson(db, { startedBot: true });
+    const { c } = await forwarded(t, me, lucy, "can we have a place to message people");
+    const res = await tap(t, me, c, "new");
+    expect(res.outcome).toBe("request.created");
+    expect(await requests.getById(db, systemActor(), res.requestId!)).toMatchObject({ requesterId: lucy.id, assigneeId: me.id, body: "can we have a place to message people" });
+    expect(res.effects.filter((e) => e.kind === "notify")).toEqual([]);
+    expect(edits(t).at(-1)).toContain(`#${res.requestId}`);
+    const again = await tap(t, me, c, "new");
+    expect(again).toMatchObject({ outcome: "request.duplicate", requestId: res.requestId });
+  });
+
+  it("Add to #N: appends it to that request", async () => {
+    const t = setup();
+    const lucy = await makePerson(db);
+    const me = await makePerson(db, { startedBot: true });
+    const { request: r } = await makeRequest(db, { requester: lucy, assignee: me });
+    const { c } = await forwarded(t, me, lucy, "and the HDMI cable is missing");
+    const res = await tap(t, me, c, r.id);
+    expect(res).toMatchObject({ outcome: "append.added", requestId: r.id });
+    expect((await requests.getById(db, systemActor(), r.id)).body).toContain("and the HDMI cable is missing");
+    expect(edits(t).at(-1)).toContain(`#${r.id}`);
+  });
+
+  it("the forward was deleted before the tap: says so", async () => {
+    const t = setup();
+    const me = await makePerson(db, { startedBot: true });
+    const dm: TgChat = { id: me.telegramId!, type: "private" };
+    const res = await t.run({ kind: "forward-choice", choice: "new", callbackQueryId: "cb", from: user(me), message: { message_id: 5, date: 0, chat: dm } });
+    expect(res.outcome).toBe("forward.gone");
+  });
+});

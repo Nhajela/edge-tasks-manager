@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseUpdate } from "../parse";
+import { forwardRequest, parseUpdate } from "../parse";
 import type { TgChat, TgMessage, TgUpdate, TgUser } from "../types";
 
 const ctx = { botUsername: "EtmBot", superadminUsername: "devadmin" };
@@ -266,5 +266,19 @@ describe("parseUpdate: silent commands", () => {
     expect(parse(msg("/log", { reply_to_message: fan }))).toMatchObject({ kind: "log", source: fan });
     expect(parse(msg("/log", { reply_to_message: msg("📝 #3", { from: bot }) }))).toMatchObject({ kind: "log", source: null });
     expect(parse(msg("/log"))).toMatchObject({ kind: "log", source: null });
+  });
+});
+
+describe("parseUpdate: forwards to the bot's DM", () => {
+  const fwd = (origin: object, extra: Partial<TgMessage> = {}) => msg("can we have a place to message people", { chat: dm, forward_origin: origin, ...extra } as Partial<TgMessage>);
+  it("a forward in private asks first; forwards in groups are ignored", () => {
+    expect(parse(fwd({ type: "user", date: 1, sender_user: bob }))).toMatchObject({ kind: "forward" });
+    expect(parse(msg("hi", { forward_origin: { type: "user", date: 1, sender_user: bob } } as Partial<TgMessage>)).kind).toBe("ignore");
+  });
+  it("forwardRequest: who it's from, the text, the photo", () => {
+    expect(forwardRequest(fwd({ type: "user", date: 1, sender_user: bob }))).toMatchObject({ author: bob, name: "Bob (@Bob)", body: "can we have a place to message people" });
+    // the author hides forwards: only a name, so the forwarder becomes the requester
+    expect(forwardRequest(fwd({ type: "hidden_user", date: 1, sender_user_name: "Lucy Chen" }))).toMatchObject({ author: null, name: "Lucy Chen", body: "Lucy Chen: can we have a place to message people" });
+    expect(forwardRequest(fwd({ type: "user", date: 1, sender_user: bob }, { text: undefined, caption: "this lamp", photo }))).toMatchObject({ body: "this lamp", attachments: [{ telegramFileId: "big" }] });
   });
 });

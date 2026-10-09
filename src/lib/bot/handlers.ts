@@ -14,7 +14,7 @@ import * as prompts from "@/services/prompts";
 import * as requests from "@/services/requests";
 import { confirmationMessage } from "@/services/titler";
 import type { Actor, Effect, OutgoingMessage } from "@/services/types";
-import { attachmentsOf } from "./parse";
+import { attachmentsOf, forwardRequest } from "./parse";
 import * as copy from "./replies";
 import type { HandlerResult, Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from "./types";
 
@@ -52,6 +52,10 @@ export async function handleIntent(db: DbClient, intent: Intent, deps: HandlerDe
         return await onAppend(c, intent);
       case "log":
         return await onLog(c, intent);
+      case "forward":
+        return await onForward(c, intent);
+      case "forward-choice":
+        return await onForwardChoice(c, intent);
       case "thread":
         return await onThread(c, intent);
       case "pending-reply":
@@ -235,6 +239,78 @@ async function onRequest(c: Ctx, i: Extract<Intent, { kind: "request" }>) {
     messages: [...(src ? [msg(src, srcAuthor?.id ?? null)] : []), msg(i.message, person.id)],
     attachments: i.attachments,
   }, { silent: i.silent, sourceMessageId: src?.message_id });
+}
+
+const FORWARD_TARGETS = 4;
+
+/** SPEC "Forwards": ask, replying to the forward, so the tap carries the forward back (no stored state). */
+async function onForward(c: Ctx, i: Extract<Intent, { kind: "forward" }>) {
+  const f = forwardRequest(i.message);
+  const { actor } = await sender(c, i);
+  const author = f.author ? await people.upsertFromTelegram(c.db, systemActor(), tgPerson(f.author)) : null;
+  // my open requests, the ones with this person first, newest first
+  const [mine, raised] = [await requests.listInbox(c.db, actor), await requests.listRaised(c.db, actor)];
+  const withThem = (r: { requesterId: number; assigneeId: number }) => author != null && (r.requesterId === author.id || r.assigneeId === author.id);
+  const targets = [...new Map([...mine.items, ...raised.items].filter((r) => !CLOSED.includes(r.status)).map((r) => [r.id, r])).values()]
+    .sort((a, b) => Number(withThem(b)) - Number(withThem(a)) || b.updatedAt.getTime() - a.updatedAt.getTime())
+    .slice(0, FORWARD_TARGETS);
+  const preview = f.body.length > 140 ? `${f.body.slice(0, 140)}…` : f.body || "(attachment)";
+  await reply(c, i, copy.forwardAsk(f.name, author != null, preview), {
+    buttons: [
+      { text: author ? `🆕 New request from ${f.author!.first_name}` : "🆕 New request", callback_data: "fw:new" },
+      ...targets.map((r) => ({ text: `➕ #${r.id} ${r.title}`.slice(0, 64), callback_data: `fw:${r.id}` })),
+    ],
+  });
+  return result("forward.asked");
+}
+
+async function onForwardChoice(c: Ctx, i: Extract<Intent, { kind: "forward-choice" }>) {
+  const call = tg(c);
+  await call("answerCallbackQuery", { callback_query_id: i.callbackQueryId }).catch(() => {});
+  const edit = (html: string, requestId?: number) =>
+    i.message
+      ? call("editMessageText", {
+          chat_id: i.message.chat.id,
+          message_id: i.message.message_id,
+          parse_mode: "HTML",
+          text: html,
+          // Telegram rejects non-https url buttons (local dev)
+          reply_markup: { inline_keyboard: requestId != null && requestUrl(requestId).startsWith("https://") ? [[openButton(requestId)]] : [] },
+        }).catch(() => {})
+      : Promise.resolve();
+  const fwd = i.message?.reply_to_message;
+  if (!fwd?.forward_origin) {
+    await edit(copy.forwardGone);
+    return result("forward.gone");
+  }
+  const f = forwardRequest(fwd);
+  const { actor, person: me } = await actorFromTelegram(c.db, i.from, { startedBot: true });
+  const author = f.author ? await people.upsertFromTelegram(c.db, systemActor(), tgPerson(f.author)) : null;
+  const body = f.body || (f.attachments.length ? "(attachment)" : "(message)");
+  const message = { chatId: fwd.chat.id, messageId: fwd.message_id, fromId: (author ?? me).id, text: body, link: null };
+  if (i.choice === "new") {
+    const res = await requests.create(c.db, actor, {
+      requesterId: (author ?? me).id,
+      assigneeId: me.id,
+      body,
+      chatId: fwd.chat.id,
+      chatTitle: null,
+      messages: [message],
+      attachments: f.attachments,
+    });
+    const id = res.request.id;
+    await edit(res.duplicate ? copy.alreadyTracked(id) : copy.logged(id), id);
+    // quiet at creation, like the other silent commands
+    return res.duplicate ? result("request.duplicate", id) : result("request.created", id, res.effects.filter((e) => e.kind !== "notify"));
+  }
+  const res = await requests.append(c.db, actor, { requestId: i.choice, ...message, replyToMessageId: null, attachments: f.attachments });
+  if (res.duplicate) {
+    const where = res.duplicateOf ?? i.choice;
+    await edit(copy.alreadyIn(where), where);
+    return result("append.duplicate", where);
+  }
+  await edit(copy.loggedTo(i.choice), i.choice);
+  return result("append.added", i.choice, res.effects);
 }
 
 async function onLog(c: Ctx, i: Extract<Intent, { kind: "log" }>) {

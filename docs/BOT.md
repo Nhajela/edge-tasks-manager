@@ -32,6 +32,7 @@ in a direct message (DM). Examples use `@EdgeTasksBot`; use your bot's real user
 | reply with `/log` | **Quiet.** Already a request: tells you its number. A reply to a request's message: joins that thread. Anything else: a new request from its author to you. Nothing in the group, nobody pinged; your `/log` is deleted and only you get a DM. |
 | `/new_request …` | **Quiet** `/request`: same rules, only you get a confirmation (DM), no DM to the assignee at creation. |
 | reply with `/new_request_for_me` | **Quiet**: their message becomes a request from them to you. |
+| forward a message to the bot (in private) | It shows who it's from and asks: **New request** (quiet, from its original author to you) or **➕ add to** one of your open requests (theirs first). Use it for messages `/log` can't see: from before the bot joined the group, or from another chat. |
 | `/mine` | Your open requests (assigned to you). |
 | `/raised` | Open requests you raised. |
 | `/with @bob` | Open requests between you and @bob, both ways. |

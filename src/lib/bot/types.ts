@@ -36,7 +36,15 @@ export type TgMessage = {
   /** sizes, smallest first */
   photo?: TgPhotoSize[];
   document?: TgDocument;
+  /** set on forwarded messages: who wrote the original */
+  forward_origin?: TgForwardOrigin;
 };
+
+export type TgForwardOrigin =
+  | { type: "user"; date: number; sender_user: TgUser }
+  /** the author hides forwards behind their privacy settings: only a display name */
+  | { type: "hidden_user"; date: number; sender_user_name: string }
+  | { type: "chat" | "channel"; date: number; sender_chat?: TgChat; chat?: TgChat; author_signature?: string };
 
 export type TgCallbackQuery = { id: string; from: TgUser; data?: string; message?: TgMessage };
 
@@ -93,6 +101,10 @@ export type Intent =
    * that thread; else a new request (replied author asks, sender does it). `source` null -> usage, by DM.
    */
   | ({ kind: "log"; source: TgMessage | null } & MessageCtx)
+  /** a message forwarded to the bot in private: the bot asks "new request, or add to one?" (replying to the forward) */
+  | ({ kind: "forward" } & MessageCtx)
+  /** a tap on that question: `message` is the question, its reply_to_message the forward (so no stored state) */
+  | { kind: "forward-choice"; choice: "new" | number; callbackQueryId: string; from: TgUser; message: TgMessage | null }
   /**
    * /append (/add, /more). `requestId` when given ("/append 12"); otherwise the handler resolves from `replyTo`:
    * a bot message -> findRequestByTelegramMessage, a human message -> findAppendTarget(author).

@@ -49,6 +49,15 @@ export async function handleCallback(db: DbClient, cb: TgCallbackQuery): Promise
     await handleLogin(db, cb, cb.data.slice("login:".length));
     return [];
   }
+  const fw = /^fw:(new|\d+)$/.exec(cb.data ?? "");
+  if (fw) {
+    // "new request, or add to one?" after a forward (handlers.onForwardChoice)
+    const { handleIntent } = await import("./handlers");
+    const { telegramNotifier } = await import("@/lib/telegram");
+    const choice = fw[1] === "new" ? ("new" as const) : Number(fw[1]);
+    const res = await handleIntent(db, { kind: "forward-choice", choice, callbackQueryId: cb.id, from: cb.from, message: cb.message ?? null }, { notifier: telegramNotifier, now: () => new Date() });
+    return res.effects;
+  }
   const st = parseStatusData(cb.data);
   if (st) return handleStatus(db, cb, st);
   await tg("answerCallbackQuery", { callback_query_id: cb.id });
