@@ -82,7 +82,13 @@ export const usage = {
   with: "Who with? E.g. <code>/with @bob</code>",
   status: "Which request? E.g. <code>/status 12</code>",
   done: "Reply to a request message, or use <code>/done 12</code>.",
+  log: "Reply to someone's message with /log and I'll quietly track it for you.",
 };
+
+/** Silent commands (/log, /new_request…): only the sender hears, by DM. */
+export const logged = (id: number) => `🤫 Logged quietly as #${id}. Nobody else was told.`;
+export const loggedTo = (id: number) => `🤫 Added to #${id} quietly.`;
+export const quietNeedsStart = "\n<i>Message me once in private (press Start) and I'll confirm quiet commands there instead.</i>";
 
 export const noAppendTarget = "I couldn't find an open request to add this to. Try <code>/append 12</code>.";
 

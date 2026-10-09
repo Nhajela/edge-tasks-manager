@@ -242,3 +242,29 @@ describe("parseUpdate: other updates and loop safety", () => {
     expect(r).toMatchObject({ kind: "request", attachments: [{ telegramFileId: "doc1", messageId: 90 }, { telegramFileId: "big", messageId: 91 }] });
   });
 });
+
+describe("parseUpdate: silent commands", () => {
+  it("/new_request is /request, silent", () => {
+    expect(parse(msg("/new_request @bob fix the projector"))).toMatchObject({ kind: "request", silent: true, assignee: toBob, body: "fix the projector" });
+    expect(parse(msg("/request @bob fix it"))).not.toHaveProperty("silent", true);
+  });
+  it("/new_request_for_me on a reply: the replied author asks, the replier does it, even with an @ in the note", () => {
+    expect(parse(msg("/new_request_for_me @bob by 5", { from: alice, reply_to_message: msg("the fan is broken", { from: noName }) }))).toMatchObject({
+      kind: "request",
+      silent: true,
+      requester: { by: "user", user: noName },
+      assignee: fromAlice,
+      body: "the fan is broken",
+      note: "@bob by 5",
+    });
+  });
+  it("/new_request_for_me with text and no reply: a note to self", () => {
+    expect(parse(msg("/new_request_for_me buy tape"))).toMatchObject({ kind: "request", silent: true, requester: fromAlice, assignee: fromAlice, body: "buy tape" });
+  });
+  it("/log keeps the replied human message; a reply to the bot or no reply has no source", () => {
+    const fan = msg("the fan is broken", { from: bob });
+    expect(parse(msg("/log", { reply_to_message: fan }))).toMatchObject({ kind: "log", source: fan });
+    expect(parse(msg("/log", { reply_to_message: msg("📝 #3", { from: bot }) }))).toMatchObject({ kind: "log", source: null });
+    expect(parse(msg("/log"))).toMatchObject({ kind: "log", source: null });
+  });
+});

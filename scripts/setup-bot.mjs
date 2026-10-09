@@ -30,6 +30,9 @@ await call("setMyCommands", {
   commands: [
     { command: "request", description: "Ask someone to do something: /request @bob fix the projector" },
     { command: "append", description: "Reply to a message to add it to a request (or /append 12)" },
+    { command: "log", description: "Reply to a message: quietly track it, only you are told" },
+    { command: "new_request", description: "Like /request, but quiet: only you get a confirmation" },
+    { command: "new_request_for_me", description: "Reply to a message: quietly make it a request for you" },
     { command: "mine", description: "Open requests assigned to you" },
     { command: "raised", description: "Open requests you raised" },
     { command: "with", description: "Open requests between you and someone: /with @bob" },
@@ -44,7 +47,7 @@ await call("setMyCommands", {
 });
 await call("setMyDescription", {
   description:
-    "Edge Tasks turns Telegram messages into a shared task list for Edge City India. In any group: /request @someone <what>, or reply to a message with /request. Replies to a request's messages are kept as its thread. Tap Start to log in to your dashboard.\n\nA community project by Edge City attendees, not an official Edge City app.",
+    "Edge Tasks turns Telegram messages into a shared task list for Edge City India. In any group: /request @someone <what>, or reply to a message with /request. Replies to a request's messages are kept as its thread. To link replies sent before a request existed, the bot keeps group messages for 3 days, then deletes them. Tap Start to log in to your dashboard.\n\nA community project by Edge City attendees, not an official Edge City app.",
 });
 await call("setMyShortDescription", {
   short_description: "Raise and track requests for Edge City India right from Telegram. Community project, not official.",

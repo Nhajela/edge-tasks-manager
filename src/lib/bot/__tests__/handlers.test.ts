@@ -8,6 +8,7 @@ import { dueLabel } from "@/lib/format";
 import type { Person } from "@/lib/types";
 import * as audit from "@/services/audit";
 import * as botMessages from "@/services/botMessages";
+import * as chatBuffer from "@/services/chatBuffer";
 import * as requests from "@/services/requests";
 import type { AttachmentInput } from "@/services/requests";
 import type { Effect } from "@/services/types";
@@ -711,5 +712,120 @@ describe("round 2: the 'Mark #N done?' button in the thread", () => {
     expect((await requests.getById(db, systemActor(), request.id)).status).toBe("open");
     await tap(assignee);
     expect((await requests.getById(db, systemActor(), request.id)).status).toBe("done");
+  });
+});
+
+describe("silent commands: /new_request, /new_request_for_me, /log", () => {
+  const silentFor = (c: MessageCtx, source: TgMessage, over: Partial<Extract<Intent, { kind: "request" }>> = {}): Intent =>
+    requestIntent(c, { requester: { by: "user", user: source.from! }, assignee: { by: "user", user: c.from }, body: source.text ?? "", source, silent: true, ...over });
+  const deleted = (calls: { method: string; body: Record<string, unknown> }[]) => calls.filter((x) => x.method === "deleteMessage").map((x) => x.body);
+  const notifies = (effects: Effect[]) => effects.filter((e) => e.kind === "notify");
+
+  it("/new_request_for_me: creates for me, posts nothing in the group, pings no one, deletes the command, DMs only me", async () => {
+    const t = setup();
+    const asha = await makePerson(db, { startedBot: true });
+    const me = await makePerson(db, { startedBot: true });
+    const chat = group();
+    const source = ctx(chat, asha, "the fan in the dome is broken").message;
+    const c = ctx(chat, me, "/new_request_for_me", { reply_to_message: source });
+    const res = await t.run(silentFor(c, source));
+
+    expect(res.outcome).toBe("request.created");
+    const r = await requests.getById(db, systemActor(), res.requestId!);
+    expect(r).toMatchObject({ requesterId: asha.id, assigneeId: me.id, body: "the fan in the dome is broken" });
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0]).toMatchObject({ chatId: me.telegramId, requestId: r.id });
+    expect(t.sent[0].html).toContain(`#${r.id}`);
+    expect(t.sent.some((m) => m.chatId === chat.id)).toBe(false);
+    expect(deleted(t.calls)).toEqual([{ chat_id: chat.id, message_id: c.message.message_id }]);
+    expect(notifies(res.effects)).toEqual([]);
+    expect(res.effects).toContainEqual({ kind: "title", requestId: r.id });
+  });
+
+  it("/new_request @bob silently: Bob gets no DM at creation, but later changes notify as usual", async () => {
+    const t = setup();
+    const me = await makePerson(db, { startedBot: true });
+    const bob = await makePerson(db, { startedBot: true });
+    const c = ctx(group(), me, `/new_request @${bob.username} chairs`);
+    const res = await t.run(requestIntent(c, { assignee: { by: "username", username: bob.username! }, body: "chairs", silent: true }));
+    expect(notifies(res.effects)).toEqual([]);
+    const done = await requests.setStatus(db, actorFor(bob), res.requestId!, { status: "done" });
+    expect(notifies(done.effects).length).toBeGreaterThan(0);
+  });
+
+  it("can't DM the sender (never pressed Start): says it in the group instead and keeps the command", async () => {
+    const asha = await makePerson(db);
+    const me = await makePerson(db);
+    const cap = capturingNotifier({ blockedChatIds: [me.telegramId!] });
+    const calls: { method: string; body: Record<string, unknown> }[] = [];
+    const deps = { notifier: cap.notifier, now: () => NOW, tg: async (method: string, body: Record<string, unknown>) => (calls.push({ method, body }), { ok: true }) };
+    const chat = group();
+    const source = ctx(chat, asha, "need a ladder").message;
+    const c = ctx(chat, me, "/new_request_for_me", { reply_to_message: source });
+    const res = await handleIntent(db, silentFor(c, source), deps);
+    expect(res.outcome).toBe("request.created");
+    expect(cap.sent.at(-1)).toMatchObject({ chatId: chat.id, replyTo: c.message.message_id });
+    expect(deleted(calls)).toEqual([]);
+  });
+
+  it("pulls in replies sent before the request (from the 3-day buffer), keeping the chain", async () => {
+    const t = setup();
+    const asha = await makePerson(db);
+    const ben = await makePerson(db);
+    const me = await makePerson(db, { startedBot: true });
+    const chat = group();
+    const source = ctx(chat, asha, "projector is flickering").message;
+    const r1 = ctx(chat, ben, "since this morning", { reply_to_message: source }).message;
+    const r2 = ctx(chat, asha, "yes, the HDMI one", { reply_to_message: r1, message_id: r1.message_id + 1 }).message;
+    const noise = ctx(chat, ben, "lunch?").message;
+    for (const m of [source, r1, r2, noise]) await chatBuffer.record(db, m as never, NOW);
+    const c = ctx(chat, me, "/request", { reply_to_message: source, message_id: r2.message_id + 1 });
+    await chatBuffer.record(db, c.message as never, NOW);
+
+    const res = await t.run(requestIntent(c, { requester: { by: "user", user: c.message.reply_to_message!.from! }, assignee: { by: "user", user: c.from }, body: source.text!, source }));
+    const d = await requests.getDetail(db, systemActor(), res.requestId!);
+    const thread = d.messages.filter((m) => m.kind === "thread");
+    expect(thread.map((m) => [m.text, m.fromId, m.replyToMessageId])).toEqual([
+      ["since this morning", ben.id, source.message_id],
+      ["yes, the HDMI one", asha.id, r1.message_id],
+    ]);
+    // a later reply to an imported message still chains
+    expect(await requests.findRequestByTelegramMessage(db, chat.id, r2.message_id)).toBe(res.requestId);
+  });
+
+  it("/log: new message -> a request for me; already tracked -> says so; a reply to a request's message -> joins that thread", async () => {
+    const t = setup();
+    const asha = await makePerson(db);
+    const me = await makePerson(db, { startedBot: true });
+    const chat = group();
+
+    const fresh = ctx(chat, asha, "can someone get water").message;
+    const c1 = ctx(chat, me, "/log", { reply_to_message: fresh });
+    const made = await t.run({ kind: "log", source: fresh, ...c1 });
+    expect(made.outcome).toBe("request.created");
+    expect(await requests.getById(db, systemActor(), made.requestId!)).toMatchObject({ requesterId: asha.id, assigneeId: me.id });
+
+    t.sent.length = 0;
+    const again = await t.run({ kind: "log", source: fresh, ...ctx(chat, me, "/log", { reply_to_message: fresh }) });
+    expect(again).toMatchObject({ outcome: "log.already", requestId: made.requestId });
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0]).toMatchObject({ chatId: me.telegramId });
+
+    // a reply to the request's message that the bot only has in the buffer (Telegram drops nested reply_to_message)
+    const reply = ctx(chat, asha, "20 litres please", { reply_to_message: fresh }).message;
+    await chatBuffer.record(db, reply as never, NOW);
+    const shallow = { ...reply, reply_to_message: undefined };
+    const joined = await t.run({ kind: "log", source: shallow, ...ctx(chat, me, "/log", { reply_to_message: shallow }) });
+    expect(joined).toMatchObject({ outcome: "log.added", requestId: made.requestId });
+    expect(await requests.findRequestByTelegramMessage(db, chat.id, reply.message_id)).toBe(made.requestId);
+  });
+
+  it("/log without replying to someone: usage by DM, nothing in the group", async () => {
+    const t = setup();
+    const me = await makePerson(db, { startedBot: true });
+    const chat = group();
+    const res = await t.run({ kind: "log", source: null, ...ctx(chat, me, "/log") });
+    expect(res.outcome).toBe("log.usage");
+    expect(t.sent.every((m) => m.chatId === me.telegramId)).toBe(true);
   });
 });

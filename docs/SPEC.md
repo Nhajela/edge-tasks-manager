@@ -201,6 +201,28 @@ status command updates that request — no id needed:
 - Reopening keeps the old result in the thread/history but clears the highlighted card.
 Keep it light: one card, no review/approval workflow.
 
+### Silent commands (`/log`, `/new_request`, `/new_request_for_me`)
+For logging without noise. Quiet **only at creation**: once the request exists, status changes and comments notify
+as usual.
+- `/new_request` = `/request` (same parsing), silent. `/new_request_for_me` = silent, and the sender is always the
+  assignee (a leading @name stays in the note); on a reply the replied author is the requester.
+- `/log` must reply to a human message. Already tied to a request → "That message is already #12". Its parent (from
+  the update or the buffer) is tied to a request → it joins that thread ("Added to #12 quietly"). Else → a new
+  request, replied author asks, sender does it (same as `/new_request_for_me`). No reply → usage.
+- Silent means: no group reply, no assignee DM at creation (notify effects dropped; the AI title still runs). The
+  bot DMs only the sender, then deletes the command message (needs the bot to be an admin with Delete messages;
+  without it the command stays). If the sender can't be DMed (never pressed Start), the bot replies in the group
+  instead and keeps the command, so they know it worked.
+
+### Message buffer (`chat_buffer`, 3 days)
+The Bot API can't read history, so the webhook stores every non-bot group message (raw JSON) for 3 days; rows older
+than that are purged (piggybacked on ~1 in 50 writes). Not domain state: no audit rows. Uses:
+- Any request made **from a replied message** (`/request`, `/new_request…`, `/log`) pulls in that message's whole
+  earlier reply tree from the buffer as thread messages (authors, photos, reply chain kept), so later replies to
+  them still chain.
+- `/log` finds the replied message's own parent there (Telegram omits nested `reply_to_message`).
+The bot's description says group messages are kept for 3 days.
+
 ## Notifications (`src/lib/notify.ts`)
 On status change / comment / done by the assignee: DM the requester if `started_bot`; otherwise reply in the
 original group thread (reply_to source_message_id) with "✅ @alice, #12 is done: <title>" (for done/declined and

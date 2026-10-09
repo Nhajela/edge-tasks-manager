@@ -280,3 +280,20 @@ export const aiContext = pgTable(
     check("ai_context_status_check", sql`${t.status} IN ('open','answered','dismissed')`),
   ],
 );
+
+/**
+ * Every group message the bot saw in the last 3 days (raw Telegram JSON), so a request made later from a message can
+ * pull in the replies that came before it. Not domain state: no audit rows; services/chatBuffer purges old rows.
+ */
+export const chatBuffer = pgTable(
+  "chat_buffer",
+  {
+    id: serial().primaryKey(),
+    createdAt: ts("created_at").notNull().defaultNow(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    messageId: bigint("message_id", { mode: "number" }).notNull(),
+    replyToMessageId: bigint("reply_to_message_id", { mode: "number" }),
+    message: jsonb().$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [uniqueIndex("chat_buffer_chat_message").on(t.chatId, t.messageId), index("chat_buffer_created").on(t.createdAt)],
+);

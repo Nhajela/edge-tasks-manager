@@ -10,6 +10,7 @@ import type { TgUpdate } from "@/lib/bot/types";
 import { BOT_USERNAME } from "@/lib/constants";
 import { runEffects } from "@/lib/effects";
 import { telegramNotifier } from "@/lib/telegram";
+import * as chatBuffer from "@/services/chatBuffer";
 import type { Effect } from "@/services/types";
 
 export async function POST(req: NextRequest) {
@@ -32,6 +33,10 @@ export async function POST(req: NextRequest) {
       effects = result.effects;
     }
     if (effects.length) after(() => runEffects(effects));
+    // SPEC "Message buffer": group messages kept 3 days so a later request can pull in earlier replies
+    const m = update.message;
+    if (m && m.chat.type !== "private" && !m.from?.is_bot)
+      after(() => chatBuffer.record(db(), m as unknown as chatBuffer.BufferedMessage & { chat: { id: number } }).catch((e) => console.error("chat buffer", e)));
   } catch (e) {
     console.error("telegram webhook error", e);
   }

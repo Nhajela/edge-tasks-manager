@@ -7,14 +7,16 @@ import { messageLink } from "@/lib/messageLink";
 import type { Person, Session } from "@/lib/types";
 import { PermissionError, ServiceError, errorMessage } from "@/services/errors";
 import { requestUrl, type Notifier } from "@/services/notifications";
+import * as chatBuffer from "@/services/chatBuffer";
 import * as people from "@/services/people";
 import { groupInbox, groupRaised, type InboxBucket } from "@/services/grouping";
 import * as prompts from "@/services/prompts";
 import * as requests from "@/services/requests";
 import { confirmationMessage } from "@/services/titler";
 import type { Actor, Effect, OutgoingMessage } from "@/services/types";
+import { attachmentsOf } from "./parse";
 import * as copy from "./replies";
-import type { HandlerResult, Intent, MessageCtx, PersonRef, TgMessage, TgUser } from "./types";
+import type { HandlerResult, Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from "./types";
 
 export type HandlerDeps = {
   /** sends bot replies now (the returned messageId feeds requests.setBotConfirmation / prompts.create) */
@@ -48,6 +50,8 @@ export async function handleIntent(db: DbClient, intent: Intent, deps: HandlerDe
         return await onRequest(c, intent);
       case "append":
         return await onAppend(c, intent);
+      case "log":
+        return await onLog(c, intent);
       case "thread":
         return await onThread(c, intent);
       case "pending-reply":
@@ -99,15 +103,65 @@ async function resolve(c: Ctx, ref: PersonRef): Promise<Person> {
 
 const author = (c: Ctx, m: TgMessage) => (m.from && !m.from.is_bot ? people.upsertFromTelegram(c.db, systemActor(), tgPerson(m.from)) : null);
 
-/** Create, reply "📝 #12 for @bob", remember that reply (so replies to it land on the request), DM buttons. */
-async function createAndConfirm(c: Ctx, actor: Actor, m: MessageCtx, input: requests.CreateInput): Promise<HandlerResult> {
+/**
+ * Silent commands: tell only the sender, by DM, then delete their command from the group. If we can't DM them (never
+ * pressed Start), say it in the group and leave the command, so they still know it worked.
+ */
+async function whisper(c: Ctx, m: MessageCtx, html: string, requestId?: number) {
+  const buttons = requestId != null ? [openButton(requestId)] : undefined;
+  const dm = await c.deps.notifier.send({ chatId: m.from.id, kind: "bot_reply", html, requestId, buttons });
+  if (!dm.ok) {
+    await reply(c, m, html + copy.quietNeedsStart, { requestId, buttons });
+    return;
+  }
+  // needs the bot to be a group admin with "Delete messages"; without it the command just stays
+  if (m.chat.type !== "private") await tg(c)("deleteMessage", { chat_id: m.chat.id, message_id: m.message.message_id }).catch(() => {});
+}
+
+/** Store one Telegram message in a request's thread, as its author. */
+async function storeThread(c: Ctx, requestId: number, chat: TgChat, msg: TgMessage) {
+  if (!msg.from || msg.from.is_bot) return;
+  const { actor, person } = await actorFromTelegram(c.db, msg.from);
+  const attachments = attachmentsOf(msg);
+  await requests.addThreadMessage(c.db, actor, {
+    requestId,
+    chatId: chat.id,
+    messageId: msg.message_id,
+    replyToMessageId: msg.reply_to_message?.message_id ?? null,
+    fromId: person.id,
+    text: textOf(msg).trim() || (attachments.length ? "" : "(message)"),
+    link: messageLink(chat, msg.message_id),
+    attachments,
+  });
+}
+
+/** SPEC "Message buffer": replies to `rootId` sent before the request existed join its thread (the command itself excluded). */
+async function importReplies(c: Ctx, requestId: number, m: MessageCtx, rootId: number) {
+  for (const r of (await chatBuffer.repliesTo(c.db, m.chat.id, rootId, c.deps.now())) as unknown as TgMessage[])
+    if (r.message_id !== m.message.message_id) await storeThread(c, requestId, m.chat, r);
+}
+
+/** Create, reply "📝 #12 for @bob", remember that reply (so replies to it land on the request), DM buttons. Silent: DM the sender only. */
+async function createAndConfirm(
+  c: Ctx,
+  actor: Actor,
+  m: MessageCtx,
+  input: requests.CreateInput,
+  opts: { silent?: boolean; sourceMessageId?: number } = {},
+): Promise<HandlerResult> {
   const res = await requests.create(c.db, actor, input);
   const id = res.request.id;
   if (res.duplicate) {
     // a Telegram retry has this very message stored; anything else is a second /request on an already-tracked message
     const retry = (await requests.findRequestByTelegramMessage(c.db, m.chat.id, m.message.message_id)) === id;
-    if (!retry) await reply(c, m, copy.alreadyTracked(id), { requestId: id, buttons: [openButton(id)] });
+    if (!retry) await (opts.silent ? whisper(c, m, copy.alreadyTracked(id), id) : reply(c, m, copy.alreadyTracked(id), { requestId: id, buttons: [openButton(id)] }));
     return result("request.duplicate", id);
+  }
+  if (opts.sourceMessageId != null) await importReplies(c, id, m, opts.sourceMessageId);
+  if (opts.silent) {
+    await whisper(c, m, copy.logged(id), id);
+    // quiet only at creation: no assignee DM now, later changes notify as usual
+    return result("request.created", id, res.effects.filter((e) => e.kind !== "notify"));
   }
   const assignee = await people.getById(c.db, res.request.assigneeId);
   // same helper the AI titler uses when it edits this message, so the wording stays stable
@@ -180,6 +234,42 @@ async function onRequest(c: Ctx, i: Extract<Intent, { kind: "request" }>) {
     chatTitle: i.chat.title ?? null,
     messages: [...(src ? [msg(src, srcAuthor?.id ?? null)] : []), msg(i.message, person.id)],
     attachments: i.attachments,
+  }, { silent: i.silent, sourceMessageId: src?.message_id });
+}
+
+async function onLog(c: Ctx, i: Extract<Intent, { kind: "log" }>) {
+  const src = i.source;
+  if (!src) {
+    await whisper(c, i, copy.usage.log);
+    return result("log.usage");
+  }
+  const tracked = await requests.findRequestByTelegramMessage(c.db, i.chat.id, src.message_id);
+  if (tracked != null) {
+    await whisper(c, i, copy.alreadyTracked(tracked), tracked);
+    return result("log.already", tracked);
+  }
+  // Telegram drops the replied message's own reply_to_message; the buffer still has it
+  const parentId = src.reply_to_message?.message_id ?? (await chatBuffer.get(c.db, i.chat.id, src.message_id))?.reply_to_message?.message_id;
+  const parent = parentId != null ? await requests.findRequestByTelegramMessage(c.db, i.chat.id, parentId) : null;
+  if (parent != null) {
+    await storeThread(c, parent, i.chat, (await chatBuffer.get(c.db, i.chat.id, src.message_id)) as unknown as TgMessage ?? src);
+    await importReplies(c, parent, i, src.message_id);
+    await whisper(c, i, copy.loggedTo(parent), parent);
+    return result("log.added", parent);
+  }
+  return onRequest(c, {
+    kind: "request",
+    via: "command",
+    requester: { by: "user", user: src.from ?? i.from },
+    assignee: { by: "user", user: i.from },
+    body: textOf(src).trim(),
+    note: null,
+    source: src,
+    attachments: attachmentsOf(src),
+    silent: true,
+    message: i.message,
+    chat: i.chat,
+    from: i.from,
   });
 }
 

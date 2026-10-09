@@ -9,6 +9,7 @@ const m = vi.hoisted(() => ({
   handleStart: vi.fn(),
   handleMembership: vi.fn(),
   runEffects: vi.fn(),
+  record: vi.fn(async () => {}),
 }));
 
 vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: (fn: () => unknown) => m.afters.push(fn) }));
@@ -19,6 +20,7 @@ vi.mock("@/lib/bot/handlers", () => ({ handleIntent: m.handleIntent }));
 vi.mock("@/lib/bot/callbacks", () => ({ handleCallback: m.handleCallback, handleStart: m.handleStart }));
 vi.mock("@/lib/bot/membership", () => ({ handleMembership: m.handleMembership }));
 vi.mock("@/lib/effects", () => ({ runEffects: m.runEffects }));
+vi.mock("@/services/chatBuffer", () => ({ record: m.record }));
 
 const { POST } = await import("./route");
 
@@ -62,15 +64,22 @@ describe("POST /api/telegram", () => {
     expect(m.parseUpdate).toHaveBeenCalledWith({ update_id: 1, message: msg }, expect.objectContaining({ superadminUsername: expect.any(String) }));
     expect(m.handleIntent).toHaveBeenCalledWith("DB", intent, expect.objectContaining({ notifier: expect.anything() }));
     expect(m.runEffects).not.toHaveBeenCalled();
-    expect(m.afters).toHaveLength(1);
+    // effects, then the group message into the 3-day buffer
+    expect(m.afters).toHaveLength(2);
     await m.afters[0]();
     expect(m.runEffects).toHaveBeenCalledWith([effect]);
+    await m.afters[1]();
+    expect(m.record).toHaveBeenCalledWith("DB", msg);
   });
 
-  it("schedules nothing when there are no effects", async () => {
-    m.parseUpdate.mockReturnValue({ kind: "ignore", reason: "bot" });
+  it("no effects: only buffers group messages; DMs and bots are never buffered", async () => {
+    m.parseUpdate.mockReturnValue({ kind: "ignore", reason: "x" });
     m.handleIntent.mockResolvedValue({ outcome: "ignored", effects: [] });
     await post({ update_id: 1, message: msg });
+    expect(m.afters).toHaveLength(1);
+    m.afters.length = 0;
+    await post({ update_id: 2, message: { ...msg, chat: { id: 9100000001, type: "private" } } });
+    await post({ update_id: 3, message: { ...msg, from: { id: 1, first_name: "B", is_bot: true } } });
     expect(m.afters).toHaveLength(0);
   });
 

@@ -147,6 +147,20 @@ export const COMMAND_ENTRIES: Entry[] = [
     help: "reply to a message: add it to their latest request",
   },
   {
+    term: "/log",
+    meaning:
+      "Quiet. Reply to someone's message: already a request, it tells you its number; a reply to a request's message, it joins that thread; anything else becomes a request from them to you. Nothing is posted in the group and nobody is pinged: your /log is deleted (if the bot is a group admin) and only you get a DM. Later updates notify as usual.",
+    example: "/log",
+    help: "reply to a message: quietly track it for you, only you are told",
+  },
+  {
+    term: "/new_request, /new_request_for_me",
+    meaning:
+      "Quiet versions of /request: same rules, but no group reply and no DM to anyone at creation, only a DM to you. /new_request_for_me always gives it to you, even with an @name in the note.",
+    example: "/new_request @bob chairs for the dome",
+    help: "like /request, but quiet (…_for_me: it's yours)",
+  },
+  {
     term: "/doing",
     meaning: "Mark Doing. Reply to any message of the request (no id needed), or give the id. “@bot on it” does the same.",
     example: "/doing 12",

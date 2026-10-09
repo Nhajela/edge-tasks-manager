@@ -85,7 +85,14 @@ export type Intent =
       source: TgMessage | null;
       /** photos/documents from the command message and the source */
       attachments: AttachmentInput[];
+      /** /new_request, /new_request_for_me: no group reply or DMs at creation; the command is deleted, only the sender hears */
+      silent?: boolean;
     } & MessageCtx)
+  /**
+   * /log, silent: replying to a human message. Already in a request -> say so; a reply to a request's message -> join
+   * that thread; else a new request (replied author asks, sender does it). `source` null -> usage, by DM.
+   */
+  | ({ kind: "log"; source: TgMessage | null } & MessageCtx)
   /**
    * /append (/add, /more). `requestId` when given ("/append 12"); otherwise the handler resolves from `replyTo`:
    * a bot message -> findRequestByTelegramMessage, a human message -> findAppendTarget(author).

@@ -29,6 +29,9 @@ in a direct message (DM). Examples use `@EdgeTasksBot`; use your bot's real user
 | `/append` (also `/add`, `/more`) as a reply | Adds the replied message to the most recent open request **raised by its author** (this chat, last 24h, else anywhere). |
 | `/append 12` as a reply | Adds the replied message to #12. |
 | `/append more details` as a reply to the bot's "#12" message | Adds the text to #12. |
+| reply with `/log` | **Quiet.** Already a request: tells you its number. A reply to a request's message: joins that thread. Anything else: a new request from its author to you. Nothing in the group, nobody pinged; your `/log` is deleted and only you get a DM. |
+| `/new_request …` | **Quiet** `/request`: same rules, only you get a confirmation (DM), no DM to the assignee at creation. |
+| reply with `/new_request_for_me` | **Quiet**: their message becomes a request from them to you. |
 | `/mine` | Your open requests (assigned to you). |
 | `/raised` | Open requests you raised. |
 | `/with @bob` | Open requests between you and @bob, both ways. |
@@ -107,7 +110,9 @@ added to a group where it cannot read messages, it sends a warning to the organi
 2. If privacy mode is still on, make the bot an admin (no extra admin rights needed), or turn privacy mode off and
    add the bot again.
 3. Try it: `/request @yourself test` in the group. The bot should reply with "📝 #… for @…".
-4. Ask members to open the bot once and tap **Start**. After that they get DMs when someone asks them for something
+4. For the quiet commands (`/log`, `/new_request…`) to delete your command message, make the bot an admin with
+   **Delete messages**. Without it they still work, but the command stays visible.
+5. Ask members to open the bot once and tap **Start**. After that they get DMs when someone asks them for something
    or when their request is done. People who never started the bot get notified in the group instead.
 
 Supergroups get "Open in Telegram" links on each message. Basic groups and DMs cannot have message links. Telegram

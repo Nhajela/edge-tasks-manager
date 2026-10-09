@@ -18,11 +18,13 @@ const MEDIA: [string, string][] = [
   ["audio", "audio"], ["location", "location"], ["venue", "location"], ["poll", "poll"], ["contact", "contact"], ["dice", "dice"],
 ];
 const APPEND_COMMANDS = ["append", "add", "more"];
+/** silent creation (SPEC "Silent commands") */
+const SILENT_REQUEST = ["new_request", "new_request_for_me"];
 
 const textOf = (m: TgMessage) => m.text ?? m.caption ?? "";
 
 /** Largest photo (by area) and/or the document of one message. */
-function attachmentsOf(m: TgMessage | null): AttachmentInput[] {
+export function attachmentsOf(m: TgMessage | null): AttachmentInput[] {
   if (!m) return [];
   const out: AttachmentInput[] = [];
   if (m.photo?.length) {
@@ -66,8 +68,12 @@ const parseId = (s: string) => {
 };
 
 /** /request and the leading-@bot mention share these rules (SPEC "Telegram bot"). */
-function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: number): Intent {
-  const { person, rest } = leadingPerson(c.message, afterTrigger);
+function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: number, opts: { silent?: boolean; forMe?: boolean } = {}): Intent {
+  const lead = leadingPerson(c.message, afterTrigger);
+  // "for me": the sender is always the assignee, a leading @name is just part of the note
+  const person = opts.forMe ? { by: "user" as const, user: c.from } : lead.person;
+  const rest = opts.forMe ? textOf(c.message).slice(afterTrigger).trim() : lead.rest;
+  const silent = opts.silent ? { silent: true } : {};
   const replied = replyOf(c.message);
   // a bot is never the requester: replying to a bot message is like not replying
   const source = replied && !replied.from?.is_bot ? replied : null;
@@ -75,10 +81,10 @@ function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: 
   if (source) {
     // "give this to me": the replied-to author asks, the replier (or the named @person) does it
     const requester: PersonRef = { by: "user", user: source.from ?? c.from };
-    return { kind: "request", via, requester, assignee: person ?? { by: "user", user: c.from }, body: textOf(source).trim(), note: rest || null, source, attachments, ...c };
+    return { kind: "request", via, requester, assignee: person ?? { by: "user", user: c.from }, body: textOf(source).trim(), note: rest || null, source, attachments, ...silent, ...c };
   }
-  if (!rest && !attachments.length) return person ? { kind: "prompt", assignee: person, ...c } : { kind: "help-mention", ...c };
-  return { kind: "request", via, requester: { by: "user", user: c.from }, assignee: person ?? { by: "superadmin" }, body: rest, note: null, source: null, attachments, ...c };
+  if (!rest && !attachments.length) return person && !opts.forMe ? { kind: "prompt", assignee: person, ...c } : { kind: "help-mention", ...c };
+  return { kind: "request", via, requester: { by: "user", user: c.from }, assignee: person ?? { by: "superadmin" }, body: rest, note: null, source: null, attachments, ...silent, ...c };
 }
 
 function statusIntent(c: MessageCtx, status: Status, args: string, reply: TgMessage | null): Intent {
@@ -124,6 +130,8 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
     const args = text.slice(after).trim();
 
     if (name === "request") return requestIntent(c, "command", after);
+    if (SILENT_REQUEST.includes(name)) return requestIntent(c, "command", after, { silent: true, forMe: name === "new_request_for_me" });
+    if (name === "log") return { kind: "log", source: reply && !reply.from?.is_bot ? reply : null, ...c };
     // /start logs you in and marks you DM-able: only meaningful in a DM with the bot
     if (name === "start") return message.chat.type === "private" ? { kind: "start", code: args.split(/\s+/)[0] || null, ...c } : ignore("start outside DM");
     if (STATUS_COMMANDS[name]) return statusIntent(c, STATUS_COMMANDS[name], args, reply);

@@ -22,6 +22,8 @@ More in [docs/screenshots/final/](docs/screenshots/final/) (390px and 1280px).
 | `@EdgeTasksBot @bob (no text)` | The bot asks “What should @bob do? Reply to this message with the details.” Your reply becomes the request. Expires in an hour. |
 | `Reply + /request` | Turns their message into a request from them to you. Add @bob to hand it to bob; extra text becomes a note. Photos come along. |
 | `/append (/add, /more)` | Reply to a message to add it to that person's latest open request. /append 12 picks a request. Replying to the bot's “#12” message, /append &lt;text> adds the text. The only way to change what was asked; plain replies go to the thread. |
+| `/log` | Quiet. Reply to someone's message: already a request, it tells you its number; a reply to a request's message, it joins that thread; anything else becomes a request from them to you. Nothing is posted in the group and nobody is pinged: your /log is deleted (if the bot is a group admin) and only you get a DM. Later updates notify as usual. |
+| `/new_request, /new_request_for_me` | Quiet versions of /request: same rules, but no group reply and no DM to anyone at creation, only a DM to you. /new_request_for_me always gives it to you, even with an @name in the note. |
 | `/doing` | Mark Doing. Reply to any message of the request (no id needed), or give the id. “@EdgeTasksBot on it” does the same. |
 | `/waiting <reason>` | Mark Waiting; the reason becomes the label people see. |
 | `/done <note>` | Mark Done; the requester is told. Reply in the thread, or /done 12 &lt;note> from anywhere. The note is the deliverable; send it with a photo or file, or reply to one, and that message is delivered too. The requester or an admin can close it on the assignee's behalf; then the assignee is told. |
