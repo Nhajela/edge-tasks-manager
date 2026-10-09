@@ -47,7 +47,12 @@ export function decide(
         requestId: request.id,
         recipientPersonId: assignee.id,
         html: `📝 ${escapeHtml(displayName(requester))} asked you: <b>${title}</b> (${tag})`,
-        buttons,
+        // one-tap status for the assignee (src/lib/bot/callbacks.ts)
+        buttons: [
+          { text: "🔄 On it", callback_data: `st:${request.id}:in_progress` },
+          { text: "✅ Done", callback_data: `st:${request.id}:done` },
+          ...buttons,
+        ],
       },
     ];
   }

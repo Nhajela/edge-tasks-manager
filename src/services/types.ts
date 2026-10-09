@@ -31,5 +31,6 @@ export type OutgoingMessage = {
   requestId?: number | null;
   /** people.id of a DM recipient, so a 403 can flip started_bot off */
   recipientPersonId?: number | null;
-  buttons?: { text: string; url: string }[];
+  /** url buttons, or callback buttons (`st:<id>:<status>`, handled in src/lib/bot/callbacks.ts) */
+  buttons?: ({ text: string; url: string } | { text: string; callback_data: string })[];
 };
