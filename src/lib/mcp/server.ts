@@ -10,6 +10,7 @@ import { displayName } from "@/lib/names";
 import type { Person, Request } from "@/lib/types";
 import { ServiceError, ValidationError, NotFoundError } from "@/services/errors";
 import { requestUrl } from "@/services/notifications";
+import { groupInbox, groupRaised } from "@/services/grouping";
 import * as people from "@/services/people";
 import * as requests from "@/services/requests";
 import type { Actor, DbClient, Effect } from "@/services/types";
@@ -52,8 +53,40 @@ const summary = (r: Request & Partial<Pick<requests.ListItem, "requester" | "ass
   doneAt: r.doneAt?.toISOString() ?? null,
   createdAt: r.createdAt.toISOString(),
   updatedAt: r.updatedAt.toISOString(),
+  resultNote: r.resultNote,
   ...(r.requester ? { requester: ref(r.requester), assignee: ref(r.assignee ?? null), attachmentCount: r.attachmentCount } : {}),
 });
+
+const message = (m: requests.DetailMessage) => ({
+  kind: m.kind,
+  from: ref(m.from),
+  text: m.text,
+  link: m.link,
+  messageId: m.messageId,
+  replyToMessageId: m.replyToMessageId,
+  at: m.createdAt.toISOString(),
+});
+
+const file = (f: requests.Detail["attachments"][number]) => ({
+  id: f.id,
+  kind: f.kind,
+  mime: f.mime,
+  fileName: f.fileName,
+  width: f.width,
+  height: f.height,
+  url: fileUrl(f.id),
+});
+
+/** "To me" and "I asked" buckets come from services/grouping; admins' all box is one group per assignee. */
+function groupFor(box: "inbox" | "raised" | "all", items: requests.ListItem[], now: Date) {
+  if (box === "inbox") return groupInbox(items, now).groups;
+  if (box === "raised") return groupRaised(items, now).groups;
+  const by = new Map<number, requests.ListItem[]>();
+  for (const r of items) by.set(r.assigneeId, [...(by.get(r.assigneeId) ?? []), r]);
+  return [...by.values()]
+    .map((its) => ({ key: `person:${its[0].assignee.id}`, title: displayName(its[0].assignee), person: person(its[0].assignee), count: its.length, items: its }))
+    .sort((a, b) => a.title.localeCompare(b.title));
+}
 
 export type McpDeps = {
   db?: DbClient;
@@ -107,7 +140,7 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
     {
       title: "List requests",
       description:
-        "List requests, newest first, with status, priority, due date, requester and assignee. box: inbox (asked of me, default), raised (I asked), all (admins only). Returns counts of open/done/all for the box.",
+        "List requests in groups, never mixing directions. box inbox (asked of me, default): groups new (not opened yet), act (due by tomorrow or undated), upcoming, waiting, done (last 14 days). box raised (I asked): overdue, active, waiting, recently_done. box all (admins only): one group per assignee. Returns { box, counts (open/done/all), groups: [{ key, title, count, items }] }; each item has status, priority, due date, requester, assignee, resultNote.",
       inputSchema: z.object({
         box: z.enum(["inbox", "raised", "all"]).optional().describe("inbox (default), raised, or all (admins only)."),
         status: z
@@ -115,8 +148,7 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
           .optional()
           .describe("open (default: anything not done/declined), done (done or declined), all, or one exact status."),
         person: z.string().optional().describe("Only requests involving this @username (as requester or assignee)."),
-        limit: z.number().int().min(1).max(100).optional().describe("Default 25."),
-        offset: z.number().int().min(0).optional(),
+        limit: z.number().int().min(1).max(100).optional().describe("Max items per group (count is the full size). Default 25."),
       }),
       annotations: RO,
     },
@@ -127,7 +159,10 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
         if (!p) throw new NotFoundError(`No one called @${normalizeUsername(a.person)} yet.`);
         personId = p.id;
       }
-      const filter = { status: a.status ?? "open", personId, limit: a.limit ?? 25, offset: a.offset ?? 0 };
+      const now = new Date();
+      const status = a.status ?? "open";
+      // every matching item (the buckets need them all); "all" keeps done ones from the last 14 days, like the web
+      const filter = { status, personId, limit: 500, closedSince: status === "all" ? new Date(now.getTime() - 14 * 86400_000) : undefined };
       const box = a.box ?? "inbox";
       const res =
         box === "raised"
@@ -135,7 +170,9 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
           : box === "all"
             ? await requests.listAll(db, actor, filter)
             : await requests.listInbox(db, actor, filter);
-      return { box, counts: res.counts, items: res.items.map(summary) };
+      const limit = a.limit ?? 25;
+      const groups = groupFor(box, res.items, now).map((g) => ({ ...g, items: g.items.slice(0, limit).map(summary) }));
+      return { box, counts: res.counts, groups };
     }),
   );
 
@@ -144,37 +181,33 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
     {
       title: "Get request",
       description:
-        "One request in full: body, every Telegram message behind it (original, appended, and the reply thread, with t.me links), attachments, the timeline of every change and comment, the AI's open question, and the people involved. Attachment urls are public URLs you can fetch directly (images, documents), no auth needed.",
+        "One request in full. result comes first: what was delivered when it was closed (note, who, when, the message and its files), or null. Then body, every Telegram message behind it (original, appended, and the reply thread, with t.me links), attachments, the timeline of every change and comment, the AI's open question, and the people involved. Attachment urls are public URLs you can fetch directly (images, documents), no auth needed.",
       inputSchema: z.object({ id }),
       annotations: RO,
     },
     tool("get_request", async (a) => {
       const d = await requests.getDetail(db, actor, a.id);
+      const r = d.request;
+      const msg = d.messages.find((m) => m.id === r.resultMessageId) ?? null;
+      const by = r.resultById != null ? await people.getById(db, r.resultById) : null;
       return {
+        result: r.resultAt
+          ? {
+              note: r.resultNote,
+              by: ref(by),
+              at: r.resultAt.toISOString(),
+              message: msg && message(msg),
+              attachments: msg?.messageId != null ? d.attachments.filter((f) => f.chatId === msg.chatId && f.messageId === msg.messageId).map(file) : [],
+            }
+          : null,
         ...summary(d.request),
         body: d.request.body,
         aiQuestion: d.request.aiQuestion,
         chatTitle: d.request.chatTitle,
         messageLink: d.request.messageLink,
         people: { requester: person(d.requester), assignee: person(d.assignee), createdBy: person(d.createdBy) },
-        messages: d.messages.map((m) => ({
-          kind: m.kind,
-          from: ref(m.from),
-          text: m.text,
-          link: m.link,
-          messageId: m.messageId,
-          replyToMessageId: m.replyToMessageId,
-          at: m.createdAt.toISOString(),
-        })),
-        attachments: d.attachments.map((f) => ({
-          id: f.id,
-          kind: f.kind,
-          mime: f.mime,
-          fileName: f.fileName,
-          width: f.width,
-          height: f.height,
-          url: fileUrl(f.id),
-        })),
+        messages: d.messages.map(message),
+        attachments: d.attachments.map(file),
         timeline: d.timeline.map((t) => ({ at: t.at.toISOString(), by: t.actorLabel, via: t.via, action: t.action, summary: t.summary })),
       };
     }),
