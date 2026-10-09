@@ -189,6 +189,19 @@ Pages:
   / claude.ai, and bot usage cheat sheet.
 - `/admin` (admin) — all requests, filter by person/status.
 
+### Grouping (never mix directions)
+"To me" and "I asked" are never interleaved in one list anywhere (web, bot, MCP).
+- `/inbox` (To me), sections in this order: **Needs you** (open + doing; sorted overdue → due soonest → priority →
+  oldest), **Waiting** (waiting status, with the custom label as the reason), **Done** (last 14 days, collapsed by default;
+  "All" chip shows everything). Declined goes under Done.
+- `/raised` (I asked), sections: **Not started** (open), **In progress** (doing), **Waiting**, **Done** (collapsed);
+  each row says who it's with and highlights rows with activity in the last 24h ("updated 2h ago").
+- Optional "Group by" control on both: Status (default) · Person · Group chat — regrouping only, still one direction.
+- `/with/[username]`: two separate blocks, "@bob asked you" then "You asked @bob", each with its own counts.
+- `/admin`: grouped by assignee (person headers with open counts), filters on top.
+- Bot `/with @bob` replies in the same two blocks; `/mine` and `/raised` stay separate commands.
+- Section headers show counts; empty sections are hidden (except an empty "Needs you" which shows "Nothing waiting on you 🎉").
+
 ## AI titler (`src/lib/ai/titler.ts`)
 OpenRouter chat completions (`https://openrouter.ai/api/v1/chat/completions`), model from OPENROUTER_MODEL,
 JSON response format. Runs after create/append via Next `after()` so the webhook returns fast. Input: request body
