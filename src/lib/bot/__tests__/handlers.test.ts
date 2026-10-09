@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { testDb } from "@tests/helpers/db";
 import { capturingNotifier } from "@tests/helpers/notifier";
 import { actorFor, fakeChatId, makePerson, makeRequest } from "@tests/factories";
