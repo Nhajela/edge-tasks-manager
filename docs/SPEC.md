@@ -107,7 +107,13 @@ Parsing rules (pure function in `src/lib/bot/parse.ts`, unit tested heavily):
   person replying (the "give this to me" case). `/request @bob` as a reply → assignee = @bob, requester = original
   author. Extra text after the command is added as a note. Replied message text/caption becomes the body; its photo
   is attached.
-- Mention: `@<bot> @bob please …` or `@<bot> …` works exactly like `/request …` (also when replying).
+- Mention = new request, same as `/request`: `@<bot> @bob fix the projector` → request to @bob, body "fix the
+  projector". `@<bot> fix the projector` → request to the superadmin. As a reply: `@<bot>` alone → request from the
+  replied-to author to the person replying; `@<bot> @bob` → to bob. Only when unambiguous: the bot mention must be the
+  first thing in the message (leading whitespace ok); a bot mention later in a sentence ("thanks @<bot>") is ignored. A
+  bare `@<bot>` with no text and no reply → short help reply, nothing created. `@<bot> @bob` with no text and no reply →
+  ask "What should @bob do? Reply to this with the details" and treat the reply as the body (pending-request row keyed
+  by the bot's prompt message id, expires in 1h).
 - `/request@<bot> …` command suffix form is handled.
 - Multiple @mentions: first @mention right after the command is the assignee; others stay in the text.
 - `text_mention` entities (users without usernames) can be the assignee.
