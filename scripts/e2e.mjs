@@ -211,9 +211,16 @@ try {
     return { ctx, page };
   };
 
+  // Groups show 5 rows, then "Show N more": open them all so a row can be found.
+  const showAll = async (page) => {
+    const more = page.getByRole("button", { name: /^Show \d+ more$/ }).first();
+    while (await more.isVisible()) await more.click();
+  };
+
   const ben = await step("web: log in as the assignee (@ben)", () => loginAs("ben"));
   await step("web: inbox lists the request", async () => {
     await ben.page.goto(`${BASE}/inbox`);
+    await showAll(ben.page);
     await ben.page.locator(`a[href="/r/${tap.id}"]`).first().waitFor();
   });
   await step("web: detail shows the thread chain with reply quotes", async () => {
@@ -262,6 +269,7 @@ try {
     await s.page.goto(`${BASE}/raised`);
     const link = s.page.locator(`a[href="/r/${tap.id}"]`).first();
     if (!(await link.isVisible())) await groupHeader(s.page, "Recently done").click(); // collapsed by default
+    await showAll(s.page);
     await link.waitFor();
     return s;
   });
@@ -311,7 +319,7 @@ try {
     await asha.page.goto(`${BASE}/r/${delivered.id}`);
     await asha.page.getByText(/Delivered/).first().waitFor();
     const text = await asha.page.locator("main").innerText();
-    assert(text.indexOf("Delivered") < text.indexOf("Send me the best photos"), "Delivered card is not above the original message");
+    assert(text.indexOf("Delivered") < text.lastIndexOf("Send me the best photos"), "Delivered card is not above the original message"); // the title above the card repeats the text
     assert(text.includes("3 photos picked for the newsletter"), "seeded result note missing");
   });
 
