@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { COMMAND_ENTRIES, type Entry, WORD_ENTRIES, withBot } from "./tutorial-content";
+import { COMMAND_ENTRIES, type Entry, WORD_ENTRIES, withBot } from "@/lib/tutorial-content";
 
 const matches = (e: Entry, q: string, bot: string) =>
   withBot([e.term, e.meaning, e.example ?? ""].join(" "), bot).toLowerCase().includes(q);

@@ -1,7 +1,7 @@
-// Rewrites README.md's "Bot commands" table from src/components/landing/tutorial-content.ts (the single source).
+// Rewrites README.md's "Bot commands" table from src/lib/tutorial-content.ts (the single source).
 // Run: node scripts/readme-commands.mjs   (Node 23.6+ loads the .ts file directly)
 import { readFileSync, writeFileSync } from "node:fs";
-import { commandsMarkdown } from "../src/components/landing/tutorial-content.ts";
+import { commandsMarkdown } from "../src/lib/tutorial-content.ts";
 
 const file = new URL("../README.md", import.meta.url);
 const readme = readFileSync(file, "utf8");

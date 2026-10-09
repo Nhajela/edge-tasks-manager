@@ -37,7 +37,7 @@ More in [docs/screenshots/final/](docs/screenshots/final/) (390px and 1280px).
 | `/start` | Message the bot once so it can message you back. Also finishes a web login. |
 <!-- commands:end -->
 
-Generated from `src/components/landing/tutorial-content.ts` (also the landing tutorial and the bot's /help): edit
+Generated from `src/lib/tutorial-content.ts` (also the landing tutorial and the bot's /help): edit
 there, then run `node scripts/readme-commands.mjs`.
 
 ### Reply threads

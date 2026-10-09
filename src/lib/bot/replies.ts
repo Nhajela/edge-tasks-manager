@@ -1,5 +1,5 @@
 /** Everything the bot says (HTML, Telegram parse_mode). Kept in one place so the copy is easy to review. */
-import { helpLines } from "@/components/landing/tutorial-content";
+import { helpLines } from "@/lib/tutorial-content";
 import { BOT_USERNAME, STATUS_LABEL } from "@/lib/constants";
 import { dueLabel } from "@/lib/format";
 import { escapeHtml as esc } from "@/lib/html";

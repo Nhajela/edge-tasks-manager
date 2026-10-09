@@ -1,6 +1,6 @@
 import { Column, SectionTitle } from "@/components/bits";
 import { Glossary } from "./Glossary";
-import { STEPS } from "./tutorial-content";
+import { STEPS } from "@/lib/tutorial-content";
 import { Steps } from "./Steps";
 
 /** Landing-page tutorial: the steps first, the dictionary below. */

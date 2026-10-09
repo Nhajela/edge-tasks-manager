@@ -1,4 +1,4 @@
-import { type Bubble, STEPS, withBot } from "./tutorial-content";
+import { type Bubble, STEPS, withBot } from "@/lib/tutorial-content";
 
 function ChatBubble({ b, bot }: { b: Bubble; bot: string }) {
   const you = b.from === "you";
