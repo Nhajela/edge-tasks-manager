@@ -10,6 +10,7 @@ import * as audit from "@/services/audit";
 import * as botMessages from "@/services/botMessages";
 import * as requests from "@/services/requests";
 import type { AttachmentInput } from "@/services/requests";
+import type { Effect } from "@/services/types";
 import { handleIntent } from "../handlers";
 import type { Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from "../types";
 
@@ -156,10 +157,10 @@ describe("reply threads", () => {
     const id = created.requestId!;
     const confirmId = 1; // first message from the capturing notifier
     const [asha, ben, chitra] = [await makePerson(db), await makePerson(db), await makePerson(db)];
-    // Asha replies to the bot's confirmation (a pending-reply: appends, per SPEC)
+    // Asha replies to the bot's confirmation (a pending-reply: thread, not append, per SPEC)
     const a1 = ctx(chat, asha, "I can bring one");
     const r1 = await t.run({ kind: "pending-reply", botMessageId: confirmId, text: "I can bring one", attachments: [], ...a1 });
-    expect(r1).toMatchObject({ outcome: "append.added", requestId: id });
+    expect(r1).toMatchObject({ outcome: "thread.added", requestId: id });
     // the rest reply to humans: transitive thread capture
     const ids = [a1.message.message_id];
     // Ben -> Asha's message, Asha -> Ben's, Chitra -> Ben's
@@ -177,12 +178,13 @@ describe("reply threads", () => {
     const d = await requests.getDetail(db, systemActor(), id);
     const conv = d.messages.filter((m) => m.kind !== "original");
     expect(conv.map((m) => [m.messageId, m.replyToMessageId, m.from?.id, m.kind])).toEqual([
-      [ids[0], confirmId, asha.id, "append"],
+      [ids[0], confirmId, asha.id, "thread"],
       [ids[1], ids[0], ben.id, "thread"],
       [ids[2], ids[1], asha.id, "thread"],
       [ids[3], ids[1], chitra.id, "thread"],
     ]);
-    expect(t.sent).toHaveLength(2); // confirmation + "Added to"; thread replies never ping
+    expect(t.sent).toHaveLength(1); // only the confirmation; thread replies never ping
+    expect((await requests.getById(db, systemActor(), id)).body).toBe("fix the projector in the main hall");
   });
 
   it("a reply to a message tied to nothing is ignored and never stored", async () => {
@@ -553,5 +555,101 @@ describe("verify round 3: status commands in the thread", () => {
     expect((await t.run(status(c, "done", { requestId: request.id, attachments: [photoOf(c.message.message_id)] }))).outcome).toBe("status.set");
     const d = await requests.getDetail(db, systemActor(), request.id);
     expect(d.attachments.map((a) => a.telegramFileId)).toContain(`f${c.message.message_id}`);
+  });
+});
+
+describe("round 2: the deliverable, closing on someone's behalf", () => {
+  async function threaded(opts: Parameters<typeof makeRequest>[1] = {}) {
+    const sourceId = nextId();
+    const made = await makeRequest(db, { messageId: sourceId, title: "Fix projector", ...opts });
+    const chat: TgChat = { id: made.request.chatId!, type: "supergroup" };
+    return { ...made, chat, sourceId };
+  }
+  const photoOf = (messageId: number): AttachmentInput => ({ telegramFileId: `f${messageId}`, telegramFileUniqueId: `u${messageId}`, kind: "photo", messageId });
+  /** a thread message by `who`, stored the way the bot stores it */
+  async function threadMsg(t: ReturnType<typeof setup>, chat: TgChat, who: Person, replyTo: number, text: string, media = false) {
+    const c = ctx(chat, who, text);
+    const attachments = media ? [photoOf(c.message.message_id)] : [];
+    await t.run({ kind: "thread", replyToMessageId: replyTo, text: text || "(photo)", attachments, ...c });
+    return c.message.message_id;
+  }
+  const rowOf = async (id: number, messageId: number) => (await requests.getDetail(db, systemActor(), id)).messages.find((m) => m.messageId === messageId)!;
+  const notifies = (effects: Effect[]) => effects.flatMap((e) => (e.kind === "notify" ? [e.message] : []));
+
+  it("'/done <note>' replying to a photo: that message is the result, the note the result note, the command a 'status' message", async () => {
+    const t = setup();
+    const requester = await makePerson(db, { startedBot: true });
+    const { request, assignee, chat, sourceId } = await threaded({ requester });
+    const pic = await threadMsg(t, chat, assignee, sourceId, "", true);
+    const c = ctx(chat, assignee, "/done projector fixed");
+    const res = await t.run(status(c, "done", { replyToMessageId: pic, note: "projector fixed" }));
+    expect(res.outcome).toBe("status.set");
+    const r = await requests.getById(db, systemActor(), request.id);
+    expect(r).toMatchObject({ status: "done", resultNote: "projector fixed", resultMessageId: (await rowOf(request.id, pic)).id, resultById: assignee.id });
+    expect((await rowOf(request.id, c.message.message_id)).kind).toBe("status");
+    // the requester's DM goes out as a photo with the note
+    const [dm] = notifies(res.effects);
+    expect(dm).toMatchObject({ chatId: requester.telegramId, photo: { fileId: `f${pic}` } });
+    expect(dm.html).toContain("projector fixed");
+  });
+
+  it("'@bot done <note>' replying to a message with a link: that message is the result", async () => {
+    const t = setup();
+    const { request, assignee, chat, sourceId } = await threaded();
+    const link = await threadMsg(t, chat, assignee, sourceId, "slides: https://example.com/deck");
+    await t.run(status(ctx(chat, assignee, "@bot done uploaded"), "done", { replyToMessageId: link, note: "uploaded" }));
+    expect(await requests.getById(db, systemActor(), request.id)).toMatchObject({ resultNote: "uploaded", resultMessageId: (await rowOf(request.id, link)).id });
+  });
+
+  it("'/done' replying to plain text: only the note; a photo on the /done itself wins over the replied-to one", async () => {
+    const t = setup();
+    const { request, assignee, chat, sourceId } = await threaded();
+    const plain = await threadMsg(t, chat, assignee, sourceId, "ok sorted");
+    await t.run(status(ctx(chat, assignee, "/done fixed"), "done", { replyToMessageId: plain, note: "fixed" }));
+    expect(await requests.getById(db, systemActor(), request.id)).toMatchObject({ resultNote: "fixed", resultMessageId: null });
+
+    const two = await threaded();
+    const pic = await threadMsg(t, two.chat, two.assignee, two.sourceId, "", true);
+    const c = ctx(two.chat, two.assignee, "", { caption: "/done" });
+    await t.run(status(c, "done", { replyToMessageId: pic, attachments: [photoOf(c.message.message_id)] }));
+    expect((await requests.getById(db, systemActor(), two.request.id)).resultMessageId).toBe((await rowOf(two.request.id, c.message.message_id)).id);
+  });
+
+  it("a second '/done' replying to a photo on a done request records that new result", async () => {
+    const t = setup();
+    const { request, assignee, chat, sourceId } = await threaded();
+    await t.run(status(ctx(chat, assignee, "/done"), "done", { replyToMessageId: sourceId }));
+    const pic = await threadMsg(t, chat, assignee, sourceId, "", true);
+    const res = await t.run(status(ctx(chat, assignee, "/done"), "done", { replyToMessageId: pic }));
+    expect(res.outcome).toBe("status.set");
+    expect((await requests.getById(db, systemActor(), request.id)).resultMessageId).toBe((await rowOf(request.id, pic)).id);
+  });
+
+  it("the requester closing it: the assignee is told 'closed by X on behalf of you'; the thread reply names @assignee", async () => {
+    const t = setup();
+    const assignee = await makePerson(db, { startedBot: true });
+    const { requester, chat, sourceId } = await threaded({ assignee });
+    const res = await t.run(status(ctx(chat, requester, "/done"), "done", { replyToMessageId: sourceId }));
+    expect(res.outcome).toBe("status.set");
+    const [dm] = notifies(res.effects);
+    expect(dm.chatId).toBe(assignee.telegramId);
+    expect(dm.html).toMatch(/closed by .+ on behalf of you/i);
+    expect(t.sent.at(-1)!.html).toContain(`on behalf of @${assignee.username}`);
+    // the assignee's own done says nothing about anyone's behalf
+    const own = await threaded({ requester: await makePerson(db, { startedBot: true }) });
+    await t.run(status(ctx(own.chat, own.assignee, "/done"), "done", { replyToMessageId: own.sourceId }));
+    expect(t.sent.at(-1)!.html).not.toMatch(/behalf/);
+  });
+});
+
+describe("round 2: the 'Mark #N done?' button in the thread", () => {
+  it("only the assignee's tap marks it done", async () => {
+    const { handleCallback } = await import("../callbacks");
+    const { request, assignee, requester } = await makeRequest(db);
+    const tap = (p: Person) => handleCallback(db, { id: "cb", from: user(p), data: `st:${request.id}:done` });
+    expect(await tap(requester)).toEqual([]);
+    expect((await requests.getById(db, systemActor(), request.id)).status).toBe("open");
+    await tap(assignee);
+    expect((await requests.getById(db, systemActor(), request.id)).status).toBe("done");
   });
 });

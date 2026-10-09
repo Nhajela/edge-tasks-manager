@@ -251,10 +251,7 @@ async function onPendingReply(c: Ctx, i: Extract<Intent, { kind: "pending-reply"
     await reply(c, i, copy.promptExpired(await people.getById(c.db, stale.assigneeId)));
     return result("prompt.expired");
   }
-  // SPEC: only a reply to the "#12 created" confirmation appends; replies to the bot's other messages are thread
-  const r = await requests.getById(c.db, systemActor(), requestId);
-  if (r.botConfirmChatId === i.chat.id && r.botConfirmMessageId === i.botMessageId)
-    return appendTo(c, actor, i, requestId, i.message, i.text, i.attachments, i.botMessageId);
+  // SPEC: a plain reply to any bot message of a request, the "#12 created" confirmation included, is thread; only /append appends
   return onThread(c, { kind: "thread", replyToMessageId: i.botMessageId, text: i.text, attachments: i.attachments, message: i.message, chat: i.chat, from: i.from });
 }
 
@@ -340,18 +337,29 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
   const storeInThread = async () => (await requests.addThreadMessage(c.db, actor, { requestId, ...message })).duplicate;
   // in the thread anyone may look; "/done 12" from outside needs view access
   const before = await requests.getById(c.db, viaThread ? systemActor() : actor, requestId);
-  if (before.status === i.status && !note) {
+  // SPEC deliverable: the /done's own media (setStatus picks it), else the replied-to message's photo/document/link
+  const resultMessageId =
+    i.status === "done" && !i.attachments.length && i.replyToMessageId != null ? await repliedDeliverable(c, requestId, i.chat.id, i.replyToMessageId) : null;
+  const newResult = resultMessageId != null && resultMessageId !== before.resultMessageId;
+  if (before.status === i.status && !note && !i.attachments.length && !newResult) {
     // a second "/done" (or a redelivery): no second status row or ping, same as the DM buttons
-    if ((viaThread || i.attachments.length) && (await storeInThread())) return result("status.duplicate", requestId);
+    if (viaThread && (await storeInThread())) return result("status.duplicate", requestId);
     await reply(c, i, copy.statusSet(before), { requestId });
     return result("status.unchanged", requestId);
   }
   try {
-    const res = await requests.setStatus(c.db, actor, requestId, { ...(i.status === "waiting" ? { status: i.status, customStatus: note } : { status: i.status, note }), message });
+    const res = await requests.setStatus(c.db, actor, requestId, {
+      ...(i.status === "waiting" ? { status: i.status, customStatus: note } : { status: i.status, note }),
+      message,
+      ...(resultMessageId != null ? { result: { messageId: resultMessageId } } : {}),
+    });
     if (res.duplicate) return result("status.duplicate", requestId);
     // a group fallback ("@alice, ✅ #12 is done") will say it in this chat already
-    if (!res.effects.some((e) => e.kind === "notify" && e.message.chatId === i.chat.id))
-      await reply(c, i, copy.statusSet(res.request), { requestId });
+    if (!res.effects.some((e) => e.kind === "notify" && e.message.chatId === i.chat.id)) {
+      const behalf =
+        CLOSED.includes(i.status) && person.id !== res.request.assigneeId ? { by: person, assignee: await people.getById(c.db, res.request.assigneeId) } : undefined;
+      await reply(c, i, copy.statusSet(res.request, behalf), { requestId });
+    }
     return result("status.set", requestId, res.effects);
   } catch (e) {
     // only inside the thread (they can see it anyway) do we name the parties; "/done 12" from a stranger gets the generic error
@@ -361,6 +369,15 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
     await reply(c, i, copy.cantChange(before, await people.getById(c.db, before.requesterId), await people.getById(c.db, before.assigneeId)), { requestId });
     return result("status.forbidden", requestId);
   }
+}
+
+/** request_messages.id of a conversation message (not the request itself) with a photo/document/link, else null. */
+async function repliedDeliverable(c: Ctx, requestId: number, chatId: number, messageId: number) {
+  const d = await requests.getDetail(c.db, systemActor(), requestId);
+  const m = d.messages.find((x) => x.chatId === chatId && x.messageId === messageId && x.kind !== "original" && x.kind !== "append");
+  if (!m) return null;
+  const media = d.attachments.some((a) => a.chatId === chatId && a.messageId === messageId);
+  return media || /https?:\/\/\S/i.test(m.text) ? m.id : null;
 }
 
 async function onStart(c: Ctx, i: Extract<Intent, { kind: "start" }>) {

@@ -21,6 +21,8 @@ export type SendOptions = {
   threadId?: number | null;
   /** ties the sent message to a request (bot_messages.request_id) so replies to it thread into the request */
   requestId?: number | null;
+  /** send as a photo with the html as its caption (the done deliverable) */
+  photo?: OutgoingMessage["photo"];
 };
 
 /**
@@ -94,10 +96,12 @@ export async function sendMessage(
   if (usable.length) body.reply_markup = { inline_keyboard: usable.map((b) => [b]) };
   if (asText.length) text += "\n\n" + asText.map((b) => `${b.text}: ${b.url}`).join("\n");
   body.text = text.slice(0, 4096);
+  // captions max out at 1024 chars: a longer message goes out as plain text
+  const photo = opts.photo && text.length <= 1024 ? ("fileId" in opts.photo ? opts.photo.fileId : opts.photo.url) : null;
   if (process.env.NODE_ENV !== "production") {
     // ponytail: fake ids are ms-based, unique enough for one dev box
     const fakeId = Date.now() % 2_000_000_000;
-    await devOutbox({ chatId, text, kind, replyTo: opts.replyTo ?? null, buttons: usable, messageId: fakeId });
+    await devOutbox({ chatId, text, kind, replyTo: opts.replyTo ?? null, buttons: usable, messageId: fakeId, ...(photo ? { photo } : {}) });
     if (devMuted()) {
       await logMessage(chatId, kind, text, true, fakeId, "dev: not sent", opts.requestId);
       return { ok: true, messageId: fakeId };
@@ -109,7 +113,9 @@ export async function sendMessage(
   }
 
   try {
-    let json = await post(token, "sendMessage", body);
+    let json = photo ? await post(token, "sendPhoto", { ...body, text: undefined, link_preview_options: undefined, photo, caption: text }) : null;
+    // a photo Telegram won't take (stale file id, bad caption, rate limit) still goes out as text; 403 is final
+    if (!json || (!json.ok && json.error_code !== 403)) json = await post(token, "sendMessage", body);
     // rate limited: wait as told (capped) and retry once
     if (!json.ok && json.error_code === 429) {
       await sleep(Math.min((json.parameters?.retry_after ?? 1) * 1000, 10_000));
@@ -167,7 +173,7 @@ async function devOutbox(entry: Record<string, unknown>) {
 /** Production Notifier: sends via the Bot API; a 403 on a DM means they blocked the bot, so stop DMing them. */
 export const telegramNotifier: Notifier = {
   async send(m) {
-    const res = await sendMessage(m.chatId, m.html, m.buttons ?? [], m.kind, { replyTo: m.replyTo, requestId: m.requestId });
+    const res = await sendMessage(m.chatId, m.html, m.buttons ?? [], m.kind, { replyTo: m.replyTo, requestId: m.requestId, photo: m.photo });
     if (!res.ok && res.blocked && m.recipientPersonId)
       await people.setStartedBot(db(), systemActor(), m.recipientPersonId, false).catch((e) => console.error(e));
     return res;
