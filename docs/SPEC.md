@@ -189,18 +189,34 @@ Pages:
   / claude.ai, and bot usage cheat sheet.
 - `/admin` (admin) — all requests, filter by person/status.
 
-### Grouping (never mix directions)
-"To me" and "I asked" are never interleaved in one list anywhere (web, bot, MCP).
-- `/inbox` (To me), sections in this order: **Needs you** (open + doing; sorted overdue → due soonest → priority →
-  oldest), **Waiting** (waiting status, with the custom label as the reason), **Done** (last 14 days, collapsed by default;
-  "All" chip shows everything). Declined goes under Done.
-- `/raised` (I asked), sections: **Not started** (open), **In progress** (doing), **Waiting**, **Done** (collapsed);
-  each row says who it's with and highlights rows with activity in the last 24h ("updated 2h ago").
-- Optional "Group by" control on both: Status (default) · Person · Group chat — regrouping only, still one direction.
-- `/with/[username]`: two separate blocks, "@bob asked you" then "You asked @bob", each with its own counts.
-- `/admin`: grouped by assignee (person headers with open counts), filters on top.
-- Bot `/with @bob` replies in the same two blocks; `/mine` and `/raised` stay separate commands.
-- Section headers show counts; empty sections are hidden (except an empty "Needs you" which shows "Nothing waiting on you 🎉").
+### Grouping (never mix directions) — modelled on kx-tess `/dashboard`
+Reference: `../../kraftedxlabs/kx-tess/src/services/personal-dashboard.ts` (+ its tests),
+`src/app/(app)/dashboard/{dashboard-client,dashboard-group,dashboard-task-card}.tsx`, `delegated-overview/`.
+"To me" and "I asked" are never interleaved in one list anywhere (web, bot, MCP). Buckets are **verbs** that say why an
+item is there, in a **fixed order** (never sorted by count). Grouping is a pure, unit-tested service function
+`groupInbox(requests, now)` / `groupRaised(requests, now)` in `src/services/grouping.ts`. One day convention: IST
+(Asia/Kolkata) calendar days everywhere.
+- `/inbox` (To me): **New** (open, assignee hasn't opened it yet — track `assignee_seen_at`), **Act** (open/doing, due
+  overdue/today/tomorrow or undated), **Upcoming** (open/doing, due after tomorrow), **Waiting** (waiting; custom label is
+  the reason), **Done** (done/declined in last 14 days, collapsed by default).
+- `/raised` (I asked): stat tiles first in fixed order — **Overdue** (only red one), **Open**, **In progress**,
+  **Waiting**, **Done this week**; tapping a tile filters the list. Then sections **Overdue**, **Active**, **Waiting**,
+  **Recently done** (collapsed), and a **People** strip: who has your requests, people with overdue/waiting items first,
+  on-track people behind "Show N more".
+- Sort inside every bucket: priority (urgent→low), then due ascending, undated last, then oldest.
+- Group header = button: caret + title + count chip; collapsible; **empty buckets render nothing**; all empty → one
+  "You're all caught up" state that teaches the bot commands. Show 5 rows per bucket then "Show N more" (+5).
+- Row (two lines): title (line-clamp-2); line 2 small metadata that **skips what the bucket header already says**
+  (e.g. no due label in Waiting, no status pill in Act): person, custom label/status badge, relative due ("2 days
+  overdue", "Due today", "Due tomorrow", "Due in 3 days", "Due 14 Oct"), priority badge only when not normal, group chat
+  name last and dimmest, thread/attachment counts. 3px left border by priority (urgent red, high amber, normal blue
+  faint, low none). Inbox rows keep the quick "Mark done" with Undo.
+- Layout: groups separated by generous spacing and faint separators (not boxed cards), items indented under the header
+  text, no sticky section headers. Poll/refresh every 30s while the tab is visible.
+- `/with/[username]`: two blocks, "@bob asked you" then "You asked @bob", each grouped the same way.
+- `/admin`: grouped by assignee (person headers with open/overdue counts), filters on top.
+- Bot: `/mine` lists Act then New then Upcoming (max 10); `/raised` leads with overdue; `/with @bob` replies in the same
+  two blocks. MCP `list_requests` returns `{ groups: [{ key, title, items }] }` using the same functions.
 
 ## AI titler (`src/lib/ai/titler.ts`)
 OpenRouter chat completions (`https://openrouter.ai/api/v1/chat/completions`), model from OPENROUTER_MODEL,
