@@ -13,7 +13,13 @@ import type { Actor, DbClient, Effect } from "./types";
 
 // ─── inputs / outputs ────────────────────────────────────
 
-export type MessageInput = { messageId: number; fromId?: number | null; text?: string; link?: string | null };
+export type MessageInput = {
+  messageId: number;
+  replyToMessageId?: number | null;
+  fromId?: number | null;
+  text?: string;
+  link?: string | null;
+};
 
 export type AttachmentInput = {
   messageId?: number | null;
@@ -48,6 +54,8 @@ export type MessageAddInput = {
   requestId: number;
   chatId?: number | null;
   messageId?: number | null;
+  /** the Telegram message this one replied to (thread quotes) */
+  replyToMessageId?: number | null;
   fromId?: number | null;
   text: string;
   link?: string | null;
@@ -159,6 +167,7 @@ export async function create(db: DbClient, actor: Actor, input: CreateInput): Pr
           requestId: request.id,
           chatId: input.chatId!,
           messageId: m.messageId,
+          replyToMessageId: m.replyToMessageId ?? null,
           fromId: m.fromId ?? null,
           text: m.text ?? "",
           link: m.link ?? null,
@@ -189,6 +198,7 @@ async function addMessage(db: DbClient, actor: Actor, input: MessageAddInput, ki
         requestId: request.id,
         chatId: input.chatId,
         messageId: input.messageId,
+        replyToMessageId: input.replyToMessageId ?? null,
         fromId: input.fromId ?? null,
         text,
         link: input.link ?? null,

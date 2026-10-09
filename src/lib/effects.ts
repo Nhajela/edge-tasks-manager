@@ -14,7 +14,9 @@ export type EffectDeps = {
 export async function runEffects(effects: Effect[], deps: EffectDeps = {}): Promise<void> {
   if (!effects.length) return;
   const notifier = deps.notifier ?? (await import("./telegram")).telegramNotifier;
-  const titleRequest = deps.titleRequest ?? (await import("@/services/titler")).titleRequest;
+  const titleRequest =
+    deps.titleRequest ??
+    (async (id: number) => (await import("@/services/titler")).titleRequest((await import("@/db")).db(), id));
   await Promise.all(
     effects.map(async (e) => {
       try {

@@ -1,4 +1,4 @@
-import type { aiContext, apiTokens, attachments, auditLog, people, requestMessages, requests } from "@/db/schema";
+import type { aiContext, apiTokens, attachments, auditLog, pendingPrompts, people, requestMessages, requests } from "@/db/schema";
 
 export type Status = "open" | "in_progress" | "waiting" | "done" | "declined";
 export type Priority = "low" | "normal" | "high" | "urgent";
@@ -14,6 +14,7 @@ export type Attachment = typeof attachments.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type ApiToken = typeof apiTokens.$inferSelect;
 export type AiContextItem = typeof aiContext.$inferSelect;
+export type PendingPrompt = typeof pendingPrompts.$inferSelect;
 
 export type Session = {
   telegramId: string;

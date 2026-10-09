@@ -143,6 +143,43 @@ describe("append, thread and message lookup", () => {
   });
 });
 
+describe("reply chains", () => {
+  it("SPEC example: bot confirms #12, Asha -> Ben -> Asha -> Chitra all land in the thread, in order, with reply_to", async () => {
+    const { request } = await makeRequest(db);
+    const chatId = request.chatId!;
+    await requests.setBotConfirmation(db, systemActor(), request.id, { chatId, messageId: 900 });
+    const [asha, ben, chitra] = [await makePerson(db), await makePerson(db), await makePerson(db)];
+    // each hop: the webhook resolves the replied-to message, then stores the reply
+    const hops: [Awaited<ReturnType<typeof makePerson>>, number, number][] = [
+      [asha, 901, 900],
+      [ben, 902, 901],
+      [asha, 903, 902],
+      [chitra, 904, 902],
+    ];
+    for (const [who, messageId, replyTo] of hops) {
+      const id = await requests.findRequestByTelegramMessage(db, chatId, replyTo);
+      expect(id, `reply to ${replyTo}`).toBe(request.id);
+      await requests.addThreadMessage(db, actorFor(who, { via: "telegram" }), {
+        requestId: id!,
+        chatId,
+        messageId,
+        replyToMessageId: replyTo,
+        fromId: who.id,
+        text: `msg ${messageId}`,
+      });
+    }
+    const detail = await requests.getDetail(db, systemActor(), request.id);
+    const thread = detail.messages.filter((m) => m.kind === "thread");
+    expect(thread.map((m) => [m.messageId, m.replyToMessageId, m.from?.id])).toEqual([
+      [901, 900, asha.id],
+      [902, 901, ben.id],
+      [903, 902, asha.id],
+      [904, 902, chitra.id],
+    ]);
+    expect(detail.timeline.filter((t) => t.action === "request.thread")).toHaveLength(4);
+  });
+});
+
 describe("status, comments and fields", () => {
   it("setStatus with a custom label keeps the status, sets done_at, notifies the other side", async () => {
     const requester = await makePerson(db, { startedBot: true });

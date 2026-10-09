@@ -96,6 +96,8 @@ export const requestMessages = pgTable(
       .references(() => requests.id, { onDelete: "cascade" }),
     chatId: bigint("chat_id", { mode: "number" }).notNull(),
     messageId: bigint("message_id", { mode: "number" }).notNull(),
+    /** the message this one replied to (same chat), so the UI can quote "↳ replying to <name>" */
+    replyToMessageId: bigint("reply_to_message_id", { mode: "number" }),
     fromId: integer("from_id").references(() => people.id),
     text: text().notNull().default(""),
     link: text(),
@@ -164,6 +166,29 @@ export const attachments = pgTable(
     uniqueIndex("attachments_request_file").on(t.requestId, t.telegramFileUniqueId),
     check("attachments_kind_check", sql`${t.kind} IN ('photo','document')`),
   ],
+);
+
+/**
+ * "What should @bob do?" prompts: a bare `@bot @bob` mention asks for details; the reply to the prompt becomes the
+ * request body. Keyed by the bot's prompt message; usable once, for 1h.
+ */
+export const pendingPrompts = pgTable(
+  "pending_prompts",
+  {
+    id: serial().primaryKey(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    promptMessageId: bigint("prompt_message_id", { mode: "number" }).notNull(),
+    requesterId: integer("requester_id").notNull().references(() => people.id),
+    assigneeId: integer("assignee_id").notNull().references(() => people.id),
+    createdById: integer("created_by_id").references(() => people.id),
+    /** the mention message that triggered the prompt */
+    sourceMessageId: bigint("source_message_id", { mode: "number" }),
+    chatTitle: text("chat_title"),
+    expiresAt: ts("expires_at").notNull(),
+    consumedAt: ts("consumed_at"),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [unique("pending_prompts_chat_message").on(t.chatId, t.promptMessageId)],
 );
 
 export const loginCodes = pgTable(
