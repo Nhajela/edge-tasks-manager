@@ -96,3 +96,15 @@ Five reviewer findings, each confirmed in the code first. Every fix has a failin
 | 5 | Web visits flip `started_bot` back to true without audit | fixed | `actorFromSession` upserts only when the person does not exist yet. Only `/start` (audited) sets it true again. |
 
 Checks: tsc 14s, lint 21s (0 errors, 1 old warning in `tokens.ts`), `pnpm test` 281 tests in 11.3s, `pnpm build` 26s, `pnpm e2e` passed in 48.5s.
+
+## Verify round 3
+
+Three reviewer findings, all confirmed in the code. Each fix has a failing test written first (`handlers.test.ts` "verify round 3", plus one `parse.test.ts` case).
+
+| # | Finding | Outcome | Why / what changed |
+|---|---------|---------|--------------------|
+| 1 | Thread status commands have no "status unchanged" guard | fixed | `onStatus` checks `before.status === i.status && !note` on both paths. In a thread the message is still stored (so replies chain, and a redelivery returns `status.duplicate`), but there is no `request.status` row and no ping. The reply is `status.unchanged`. |
+| 2 | Attachments on a status command are dropped | fixed | `statusIntent` carries `attachments: attachmentsOf(message)`. The command message and its media are stored on both the thread path and the explicit `/done 12` path. The `result_*` deliverable card from the SPEC is not built yet, so the photo appears as an ordinary attachment. |
+| 3 | A thread status command writes two audit rows | fixed (partly) | `setStatus` takes an optional `message`. It stores the command message and attachments and writes one `request.status` row with `data.messageId`. `request.thread` is written only on the forbidden path ("their message still lands in the thread") and on the unchanged path. Not done: the message is still stored with kind `thread`, so it still shows as a bubble and counts in `threadCount`. A separate `command` kind needs a schema check change and a prod `db:push`, plus a "system line" thread renderer. Left for a deliberate UI pass. |
+
+Checks: tsc clean, lint 0 errors (1 old warning in `tokens.ts`), `pnpm test` 285 tests in 9.9s, `pnpm build` 17.5s, `pnpm e2e` passed in 29.7s.

@@ -84,7 +84,7 @@ function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: 
 function statusIntent(c: MessageCtx, status: Status, args: string, reply: TgMessage | null): Intent {
   // in a thread a leading number is usually the note ("/done 3 spare cables"): only "#12" or a lone "12" is an id there
   const { id, rest } = !reply || /^#\d+\b|^\d+$/.test(args) ? parseId(args) : { id: null, rest: args };
-  return { kind: "status", status, requestId: id, replyToMessageId: reply?.message_id ?? null, note: rest || null, ...c };
+  return { kind: "status", status, requestId: id, replyToMessageId: reply?.message_id ?? null, note: rest || null, attachments: attachmentsOf(c.message), ...c };
 }
 
 /**

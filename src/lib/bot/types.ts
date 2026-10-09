@@ -117,7 +117,7 @@ export type Intent =
    * /done /doing /waiting /decline /reopen (and a leading "@bot done" / "@bot on it"). `requestId` when given ("/done 12"),
    * else the handler resolves `replyToMessageId` through the reply chain. `note`: the text after it (for /waiting, the label).
    */
-  | ({ kind: "status"; status: Status; requestId: number | null; replyToMessageId: number | null; note: string | null } & MessageCtx)
+  | ({ kind: "status"; status: Status; requestId: number | null; replyToMessageId: number | null; note: string | null; attachments: AttachmentInput[] } & MessageCtx)
   /** /mine /raised /help, /with @bob (`who`), /status 12 (`requestId`; null -> reply with usage). */
   | ({ kind: "list"; command: ListCommand; who: PersonRef | null; requestId: number | null } & MessageCtx)
   /** /start [code] in a DM: the eci-travel-coop login flow ("Yes, log me in" button), or a plain welcome. */

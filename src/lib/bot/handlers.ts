@@ -327,28 +327,28 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
     return result("status.no-target");
   }
   const note = i.note?.trim() || null;
-  if (viaThread) {
-    // SPEC: every captured message is stored (later replies to it chain); a stored one is a Telegram redelivery
-    const stored = await requests.addThreadMessage(c.db, actor, {
-      requestId,
-      chatId: i.chat.id,
-      messageId: i.message.message_id,
-      replyToMessageId: i.replyToMessageId,
-      fromId: person.id,
-      text: textOf(i.message),
-      link: messageLink(i.chat, i.message.message_id),
-    });
-    if (stored.duplicate) return result("status.duplicate", requestId);
-  } else {
-    // "/done 12" twice (or redelivered): no second audit row or ping, same as the DM buttons
-    const before = await requests.getById(c.db, actor, requestId);
-    if (before.status === i.status && !note) {
-      await reply(c, i, copy.statusSet(before), { requestId });
-      return result("status.unchanged", requestId);
-    }
+  // SPEC: every captured message is stored (later replies to it chain, its photo kept); a stored one is a Telegram redelivery
+  const message = {
+    chatId: i.chat.id,
+    messageId: i.message.message_id,
+    replyToMessageId: i.replyToMessageId,
+    fromId: person.id,
+    text: textOf(i.message),
+    link: messageLink(i.chat, i.message.message_id),
+    attachments: i.attachments,
+  };
+  const storeInThread = async () => (await requests.addThreadMessage(c.db, actor, { requestId, ...message })).duplicate;
+  // in the thread anyone may look; "/done 12" from outside needs view access
+  const before = await requests.getById(c.db, viaThread ? systemActor() : actor, requestId);
+  if (before.status === i.status && !note) {
+    // a second "/done" (or a redelivery): no second status row or ping, same as the DM buttons
+    if ((viaThread || i.attachments.length) && (await storeInThread())) return result("status.duplicate", requestId);
+    await reply(c, i, copy.statusSet(before), { requestId });
+    return result("status.unchanged", requestId);
   }
   try {
-    const res = await requests.setStatus(c.db, actor, requestId, i.status === "waiting" ? { status: i.status, customStatus: note } : { status: i.status, note });
+    const res = await requests.setStatus(c.db, actor, requestId, { ...(i.status === "waiting" ? { status: i.status, customStatus: note } : { status: i.status, note }), message });
+    if (res.duplicate) return result("status.duplicate", requestId);
     // a group fallback ("@alice, ✅ #12 is done") will say it in this chat already
     if (!res.effects.some((e) => e.kind === "notify" && e.message.chatId === i.chat.id))
       await reply(c, i, copy.statusSet(res.request), { requestId });
@@ -356,8 +356,9 @@ async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
   } catch (e) {
     // only inside the thread (they can see it anyway) do we name the parties; "/done 12" from a stranger gets the generic error
     if (!(e instanceof PermissionError) || !viaThread) throw e;
-    const r = await requests.getById(c.db, systemActor(), requestId);
-    await reply(c, i, copy.cantChange(r, await people.getById(c.db, r.requesterId), await people.getById(c.db, r.assigneeId)), { requestId });
+    // SPEC: their message still lands in the thread
+    if (await storeInThread()) return result("status.duplicate", requestId);
+    await reply(c, i, copy.cantChange(before, await people.getById(c.db, before.requesterId), await people.getById(c.db, before.assigneeId)), { requestId });
     return result("status.forbidden", requestId);
   }
 }

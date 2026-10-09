@@ -205,6 +205,8 @@ describe("parseUpdate: status commands", () => {
     ["@bot on it as a reply to the bot's own message",
       () => msg("@EtmBot on it", { reply_to_message: msg("📝 #12 for @bob", { message_id: 81, from: bot }) }),
       { kind: "status", status: "in_progress", replyToMessageId: 81 }],
+    ["photo captioned '/done all good' keeps the photo", () => msg(undefined, { from: bob, caption: "/done all good", photo, reply_to_message: msg("x", { message_id: 80 }) }),
+      { kind: "status", status: "done", replyToMessageId: 80, note: "all good", attachments: [{ telegramFileId: "big", kind: "photo" }] }],
     ["@bot donate chairs is a request, not done", () => msg("@etmbot donate chairs"), { kind: "request", body: "donate chairs" }],
   ];
   it.each(cases)("%s", (_n, m, expected) => expect(parse(m())).toMatchObject(expected));

@@ -208,26 +208,32 @@ export async function create(db: DbClient, actor: Actor, input: CreateInput): Pr
   return { request, effects, duplicate: false };
 }
 
+/** Stores a Telegram message on the request; false when (chat, message) is already stored (a redelivery). */
+async function insertMessage(db: DbClient, requestId: number, input: Omit<MessageAddInput, "requestId">, kind: "append" | "thread") {
+  if (input.chatId == null || input.messageId == null) return true;
+  const inserted = await db
+    .insert(requestMessages)
+    .values({
+      requestId,
+      chatId: input.chatId,
+      messageId: input.messageId,
+      replyToMessageId: input.replyToMessageId ?? null,
+      fromId: input.fromId ?? null,
+      text: input.text.slice(0, TEXT_LIMITS.body),
+      link: input.link ?? null,
+      kind,
+    })
+    .onConflictDoNothing()
+    .returning({ id: requestMessages.id });
+  return inserted.length > 0;
+}
+
 async function addMessage(db: DbClient, actor: Actor, input: MessageAddInput, kind: "append" | "thread"): Promise<AddResult> {
   const text = kind === "append" ? requireText(input.text, "Text", TEXT_LIMITS.body) : (input.text ?? "").slice(0, TEXT_LIMITS.body);
   let request = await load(db, input.requestId);
   requireMessageAccess(actor, request, input.chatId);
   if (input.chatId != null && input.messageId != null) {
-    const inserted = await db
-      .insert(requestMessages)
-      .values({
-        requestId: request.id,
-        chatId: input.chatId,
-        messageId: input.messageId,
-        replyToMessageId: input.replyToMessageId ?? null,
-        fromId: input.fromId ?? null,
-        text,
-        link: input.link ?? null,
-        kind,
-      })
-      .onConflictDoNothing()
-      .returning({ id: requestMessages.id });
-    if (!inserted.length) {
+    if (!(await insertMessage(db, request.id, { ...input, text }, kind))) {
       const same = and(eq(requestMessages.chatId, input.chatId), eq(requestMessages.messageId, input.messageId));
       const [existing] = await db.select({ requestId: requestMessages.requestId, kind: requestMessages.kind }).from(requestMessages).where(same);
       // /append on a reply already in this request's thread: promote it into the body
@@ -335,11 +341,15 @@ export async function setStatus(
   db: DbClient,
   actor: Actor,
   id: number,
-  input: { status: Status; customStatus?: string | null; note?: string | null },
-): Promise<Result> {
+  input: { status: Status; customStatus?: string | null; note?: string | null; message?: Omit<MessageAddInput, "requestId"> },
+): Promise<Result & { duplicate?: boolean }> {
   if (!STATUSES.includes(input.status)) throw new ValidationError("Unknown status.", { status: input.status });
   const before = await load(db, id);
   requireManage(actor, before);
+  // the Telegram command message is stored (replies to it chain, its media kept) under this one status audit row
+  const msg = input.message;
+  if (msg && !(await insertMessage(db, id, msg, "thread"))) return { request: before, effects: [], duplicate: true };
+  await insertAttachments(db, id, msg?.chatId, msg?.attachments);
   const customStatus =
     input.customStatus === undefined
       ? input.status === before.status
@@ -365,7 +375,7 @@ export async function setStatus(
     entityType: "request",
     entityId: id,
     summary: (customStatus ?? STATUS_LABEL[input.status]) + (note ? ` — ${clip(note)}` : ""),
-    data: { from: before.status, to: input.status, customStatus, note },
+    data: { from: before.status, to: input.status, customStatus, note, ...(msg ? { messageId: msg.messageId ?? null } : {}) },
   });
   return { request, effects: await notifyEffects(db, actor, request, { kind: "status", status: input.status, customStatus, note }) };
 }

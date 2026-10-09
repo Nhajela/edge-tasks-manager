@@ -9,6 +9,7 @@ import type { Person } from "@/lib/types";
 import * as audit from "@/services/audit";
 import * as botMessages from "@/services/botMessages";
 import * as requests from "@/services/requests";
+import type { AttachmentInput } from "@/services/requests";
 import { handleIntent } from "../handlers";
 import type { Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from "../types";
 
@@ -226,8 +227,8 @@ describe("mention prompt", () => {
 const status = (
   c: MessageCtx,
   st: Extract<Intent, { kind: "status" }>["status"],
-  over: { requestId?: number | null; replyToMessageId?: number | null; note?: string | null } = {},
-): Intent => ({ kind: "status", status: st, requestId: over.requestId ?? null, replyToMessageId: over.replyToMessageId ?? null, note: over.note ?? null, ...c });
+  over: { requestId?: number | null; replyToMessageId?: number | null; note?: string | null; attachments?: AttachmentInput[] } = {},
+): Intent => ({ kind: "status", status: st, requestId: over.requestId ?? null, replyToMessageId: over.replyToMessageId ?? null, note: over.note ?? null, attachments: over.attachments ?? [], ...c });
 
 describe("list commands", () => {
   const list = (c: MessageCtx, command: Extract<Intent, { kind: "list" }>["command"], over: { who?: PersonRef; requestId?: number | null } = {}): Intent => ({
@@ -507,5 +508,50 @@ describe("verify round 2: status commands are stored and deduped; prompts belong
     const real = await t.run({ kind: "pending-reply", botMessageId: 1, text: "carry the speakers", attachments: [], ...ctx(chat, alice, "carry the speakers") });
     expect(real.outcome).toBe("request.created");
     expect((await requests.getById(db, systemActor(), real.requestId!)).body).toBe("carry the speakers");
+  });
+});
+
+describe("verify round 3: status commands in the thread", () => {
+  async function threaded() {
+    const sourceId = nextId();
+    const made = await makeRequest(db, { messageId: sourceId, title: "Fix projector" });
+    const chat: TgChat = { id: made.request.chatId!, type: "supergroup" };
+    return { ...made, chat, sourceId };
+  }
+  const rows = async (id: number) => (await audit.listForEntity(db, "request", id)).filter((r) => r.action !== "request.create");
+  const photoOf = (messageId: number): AttachmentInput => ({ telegramFileId: `f${messageId}`, telegramFileUniqueId: `u${messageId}`, kind: "photo", messageId });
+
+  it("a second '/done' in the thread on a done request: no second status row, no second ping", async () => {
+    const t = setup();
+    const { request, assignee, requester, chat, sourceId } = await threaded();
+    const first = await t.run(status(ctx(chat, assignee, "/done"), "done", { replyToMessageId: sourceId }));
+    const again = await t.run(status(ctx(chat, requester, "/done"), "done", { replyToMessageId: sourceId }));
+    expect(again).toMatchObject({ outcome: "status.unchanged", requestId: request.id, effects: [] });
+    expect(first.effects.length).toBeGreaterThan(0);
+    expect((await rows(request.id)).filter((r) => r.action === "request.status")).toHaveLength(1);
+  });
+
+  it("'/done all good' on a photo keeps the photo; one audit row carrying the message id", async () => {
+    const t = setup();
+    const { request, assignee, chat, sourceId } = await threaded();
+    const c = ctx(chat, assignee, "", { caption: "/done all good" });
+    const res = await t.run(status(c, "done", { replyToMessageId: sourceId, note: "all good", attachments: [photoOf(c.message.message_id)] }));
+    expect(res.outcome).toBe("status.set");
+    const d = await requests.getDetail(db, systemActor(), request.id);
+    expect(d.attachments.map((a) => a.telegramFileId)).toContain(`f${c.message.message_id}`);
+    const r = await rows(request.id);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ action: "request.status", data: expect.objectContaining({ messageId: c.message.message_id }) });
+    // still stored, so replies to it chain
+    expect(await requests.findRequestByTelegramMessage(db, chat.id, c.message.message_id)).toBe(request.id);
+  });
+
+  it("'/done 12' with a photo keeps the photo", async () => {
+    const t = setup();
+    const { request, assignee, chat } = await threaded();
+    const c = ctx(chat, assignee, "", { caption: `/done ${request.id}` });
+    expect((await t.run(status(c, "done", { requestId: request.id, attachments: [photoOf(c.message.message_id)] }))).outcome).toBe("status.set");
+    const d = await requests.getDetail(db, systemActor(), request.id);
+    expect(d.attachments.map((a) => a.telegramFileId)).toContain(`f${c.message.message_id}`);
   });
 });
