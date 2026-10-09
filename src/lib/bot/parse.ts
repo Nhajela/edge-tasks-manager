@@ -1,3 +1,4 @@
+import type { Status } from "@/lib/types";
 import type { AttachmentInput } from "@/services/requests";
 import type { Intent, ListCommand, MessageCtx, PersonRef, TgMessage, TgUpdate } from "./types";
 
@@ -9,7 +10,13 @@ export type ParseCtx = {
 };
 
 const ignore = (reason: string): Intent => ({ kind: "ignore", reason });
-const LIST_COMMANDS: ListCommand[] = ["mine", "raised", "with", "status", "done", "help"];
+const LIST_COMMANDS: ListCommand[] = ["mine", "raised", "with", "status", "help"];
+const STATUS_COMMANDS: Record<string, Status> = { done: "done", doing: "in_progress", waiting: "waiting", decline: "declined", reopen: "open" };
+/** What a reply with no text/photo/document was, so it is still stored and later replies to it still chain. */
+const MEDIA: [string, string][] = [
+  ["sticker", "sticker"], ["voice", "voice note"], ["video_note", "video message"], ["video", "video"], ["animation", "GIF"],
+  ["audio", "audio"], ["location", "location"], ["venue", "location"], ["poll", "poll"], ["contact", "contact"], ["dice", "dice"],
+];
 const APPEND_COMMANDS = ["append", "add", "more"];
 
 const textOf = (m: TgMessage) => m.text ?? m.caption ?? "";
@@ -29,10 +36,13 @@ function attachmentsOf(m: TgMessage | null): AttachmentInput[] {
   return out;
 }
 
-/** The explicit reply target. In forum topics Telegram sets reply_to_message to the topic root on every message: not a reply. */
+/**
+ * The explicit reply target. In forum topics Telegram points every message at the topic root: not a reply. In plain
+ * supergroups message_thread_id is just the root of the reply chain, so a reply to that root is a real reply.
+ */
 function replyOf(m: TgMessage): TgMessage | null {
   const r = m.reply_to_message;
-  if (!r || (m.message_thread_id !== undefined && r.message_id === m.message_thread_id)) return null;
+  if (!r || r.forum_topic_created || (m.is_topic_message && r.message_id === m.message_thread_id)) return null;
   return r;
 }
 
@@ -58,7 +68,9 @@ const parseId = (s: string) => {
 /** /request and the leading-@bot mention share these rules (SPEC "Telegram bot"). */
 function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: number): Intent {
   const { person, rest } = leadingPerson(c.message, afterTrigger);
-  const source = replyOf(c.message);
+  const replied = replyOf(c.message);
+  // a bot is never the requester: replying to a bot message is like not replying
+  const source = replied && !replied.from?.is_bot ? replied : null;
   const attachments = [...attachmentsOf(c.message), ...attachmentsOf(source)];
   if (source) {
     // "give this to me": the replied-to author asks, the replier (or the named @person) does it
@@ -67,6 +79,12 @@ function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: 
   }
   if (!rest && !attachments.length) return person ? { kind: "prompt", assignee: person, ...c } : { kind: "help-mention", ...c };
   return { kind: "request", via, requester: { by: "user", user: c.from }, assignee: person ?? { by: "superadmin" }, body: rest, note: null, source: null, attachments, ...c };
+}
+
+function statusIntent(c: MessageCtx, status: Status, args: string, reply: TgMessage | null): Intent {
+  // in a thread a leading number is usually the note ("/done 3 spare cables"): only "#12" or a lone "12" is an id there
+  const { id, rest } = !reply || /^#\d+\b|^\d+$/.test(args) ? parseId(args) : { id: null, rest: args };
+  return { kind: "status", status, requestId: id, replyToMessageId: reply?.message_id ?? null, note: rest || null, ...c };
 }
 
 /**
@@ -105,7 +123,9 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
     const args = text.slice(after).trim();
 
     if (name === "request") return requestIntent(c, "command", after);
-    if (name === "start") return { kind: "start", code: args.split(/\s+/)[0] || null, ...c };
+    // /start logs you in and marks you DM-able: only meaningful in a DM with the bot
+    if (name === "start") return message.chat.type === "private" ? { kind: "start", code: args.split(/\s+/)[0] || null, ...c } : ignore("start outside DM");
+    if (STATUS_COMMANDS[name]) return statusIntent(c, STATUS_COMMANDS[name], args, reply);
     if (APPEND_COMMANDS.includes(name)) {
       const { id, rest } = parseId(args);
       // replying to a human: attach that message; replying to the bot (or no reply): the command itself is the payload
@@ -117,7 +137,7 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
     if ((LIST_COMMANDS as string[]).includes(name)) {
       const command = name as ListCommand;
       const who = command === "with" ? (leadingPerson(message, after).person ?? (reply?.from ? { by: "user" as const, user: reply.from } : null)) : null;
-      const requestId = command === "status" || command === "done" ? parseId(args).id : null;
+      const requestId = command === "status" ? parseId(args).id : null;
       return { kind: "list", command, who, requestId, ...c };
     }
     return ignore("unknown command");
@@ -126,14 +146,22 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
   // a bot mention counts only as the first thing in the message ("thanks @bot" is not a trigger)
   const lead = text.length - text.trimStart().length;
   const mention = new RegExp(`^@${bot}(?![A-Za-z0-9_])[\\s,:]*`, "i").exec(text.slice(lead));
-  if (mention) return requestIntent(c, "mention", lead + mention[0].length);
+  if (mention) {
+    const after = text.slice(lead + mention[0].length);
+    const kw = /^(done|on it)(?![A-Za-z0-9_])[\s,:.!-]*/i.exec(after);
+    if (kw) return statusIntent(c, kw[1].toLowerCase() === "done" ? "done" : "in_progress", after.slice(kw[0].length).trim(), reply);
+    return requestIntent(c, "mention", lead + mention[0].length);
+  }
 
   if (!reply) return ignore("not addressed to the bot");
   const attachments = attachmentsOf(message);
-  if (!text.trim() && !attachments.length) return ignore("nothing to store");
   if (reply.from?.is_bot && reply.from.username?.toLowerCase() === bot) {
+    if (!text.trim() && !attachments.length) return ignore("nothing to store");
     return { kind: "pending-reply", botMessageId: reply.message_id, text: text.trim(), attachments, ...c };
   }
-  // the handler keeps it only if the replied message is tied to a request (findRequestByTelegramMessage)
-  return { kind: "thread", replyToMessageId: reply.message_id, text: text.trim(), attachments, ...c };
+  // the handler keeps it only if the replied message is tied to a request (findRequestByTelegramMessage); stickers,
+  // voice notes etc. are stored too, so a later reply to them still chains back to the request
+  const media = MEDIA.find(([k]) => k in message)?.[1] ?? "message";
+  const body = text.trim() || (attachments.length ? "" : `(${media})`);
+  return { kind: "thread", replyToMessageId: reply.message_id, text: body, attachments, ...c };
 }

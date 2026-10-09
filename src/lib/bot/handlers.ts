@@ -1,11 +1,11 @@
 import type { DbClient } from "@/db";
 import { actorFromTelegram, systemActor } from "@/lib/actor";
-import { SITE_URL } from "@/lib/constants";
+import { CLOSED, SITE_URL } from "@/lib/constants";
 import { appLink } from "@/lib/links";
 import { claimCode, isPendingCode } from "@/lib/login";
 import { messageLink } from "@/lib/messageLink";
 import type { Person, Session } from "@/lib/types";
-import { ServiceError, errorMessage } from "@/services/errors";
+import { PermissionError, ServiceError, errorMessage } from "@/services/errors";
 import { requestUrl, type Notifier } from "@/services/notifications";
 import * as people from "@/services/people";
 import * as prompts from "@/services/prompts";
@@ -52,6 +52,8 @@ export async function handleIntent(db: DbClient, intent: Intent, deps: HandlerDe
         return await onPendingReply(c, intent);
       case "prompt":
         return await onPrompt(c, intent);
+      case "status":
+        return await onStatus(c, intent);
       case "list":
         return await onList(c, intent);
       case "start":
@@ -140,7 +142,11 @@ async function appendTo(
     link: messageLink(m.chat, payload.message_id),
     attachments,
   });
-  if (res.duplicate) return result("append.duplicate", requestId);
+  if (res.duplicate) {
+    // same request: a Telegram retry, stay quiet; another request: say where it already is
+    if (res.duplicateOf != null && res.duplicateOf !== requestId) await reply(c, m, copy.alreadyIn(res.duplicateOf), { requestId: res.duplicateOf });
+    return result("append.duplicate", requestId);
+  }
   await reply(c, m, copy.added(requestId), { requestId });
   return result("append.added", requestId, res.effects);
 }
@@ -178,8 +184,9 @@ async function onRequest(c: Ctx, i: Extract<Intent, { kind: "request" }>) {
 async function onAppend(c: Ctx, i: Extract<Intent, { kind: "append" }>) {
   const { actor } = await sender(c, i);
   let requestId = i.requestId;
-  if (requestId == null && i.replyTo?.from?.is_bot) requestId = await requests.findRequestByTelegramMessage(c.db, i.chat.id, i.replyTo.message_id);
-  else if (requestId == null && i.replyTo) {
+  // a message already tied to a request (bot confirmation, thread reply, ...) appends to that request
+  if (requestId == null && i.replyTo) requestId = await requests.findRequestByTelegramMessage(c.db, i.chat.id, i.replyTo.message_id);
+  if (requestId == null && i.replyTo && !i.replyTo.from?.is_bot) {
     const who = await author(c, i.replyTo);
     if (who) requestId = (await requests.findAppendTarget(c.db, { authorPersonId: who.id, chatId: i.chat.id }))?.id ?? null;
   }
@@ -204,7 +211,11 @@ async function onThread(c: Ctx, i: Extract<Intent, { kind: "thread" }>) {
     link: messageLink(i.chat, i.message.message_id),
     attachments: i.attachments,
   });
-  return result(res.duplicate ? "thread.duplicate" : "thread.added", requestId, res.effects);
+  if (res.duplicate) return result("thread.duplicate", requestId);
+  // SPEC: plain "done" is conversation, but the assignee's bare "done" gets a one-tap button instead of a guess
+  if (/^(done\s*✅?|✅)$/iu.test(i.text.trim()) && res.request.assigneeId === person.id && !CLOSED.includes(res.request.status))
+    await reply(c, i, copy.markDone(requestId), { requestId, buttons: [{ text: "✅ Mark done", callback_data: `st:${requestId}:done` }] });
+  return result("thread.added", requestId, res.effects);
 }
 
 async function onPendingReply(c: Ctx, i: Extract<Intent, { kind: "pending-reply" }>) {
@@ -233,8 +244,17 @@ async function onPendingReply(c: Ctx, i: Extract<Intent, { kind: "pending-reply"
     });
   }
   const requestId = await requests.findRequestByTelegramMessage(c.db, i.chat.id, i.botMessageId);
-  if (requestId == null) return result("pending-reply.unrelated");
-  return appendTo(c, actor, i, requestId, i.message, i.text, i.attachments, i.botMessageId);
+  if (requestId == null) {
+    const stale = await prompts.find(c.db, i.chat.id, i.botMessageId);
+    if (!stale || stale.consumedAt) return result("pending-reply.unrelated");
+    await reply(c, i, copy.promptExpired(await people.getById(c.db, stale.assigneeId)));
+    return result("prompt.expired");
+  }
+  // SPEC: only a reply to the "#12 created" confirmation appends; replies to the bot's other messages are thread
+  const r = await requests.getById(c.db, systemActor(), requestId);
+  if (r.botConfirmChatId === i.chat.id && r.botConfirmMessageId === i.botMessageId)
+    return appendTo(c, actor, i, requestId, i.message, i.text, i.attachments, i.botMessageId);
+  return onThread(c, { kind: "thread", replyToMessageId: i.botMessageId, text: i.text, attachments: i.attachments, message: i.message, chat: i.chat, from: i.from });
 }
 
 async function onPrompt(c: Ctx, i: Extract<Intent, { kind: "prompt" }>) {
@@ -291,17 +311,40 @@ async function onList(c: Ctx, i: Extract<Intent, { kind: "list" }>) {
       await reply(c, i, copy.status(r, requester, assignee, now), { requestId: r.id, buttons: [openButton(r.id)] });
       return result("status", r.id);
     }
-    case "done": {
-      if (i.requestId == null) {
-        await reply(c, i, copy.usage.done);
-        return result("list.usage");
-      }
-      const res = await requests.setStatus(c.db, actor, i.requestId, { status: "done" });
-      // a group fallback ("@alice, ✅ #12 is done") will say it in this chat already
-      if (!res.effects.some((e) => e.kind === "notify" && e.message.chatId === i.chat.id))
-        await reply(c, i, copy.done(res.request), { requestId: res.request.id });
-      return result("done", res.request.id, res.effects);
-    }
+  }
+}
+
+/** /done /doing /waiting /decline /reopen: an explicit id, or whatever request the replied-to message belongs to. */
+async function onStatus(c: Ctx, i: Extract<Intent, { kind: "status" }>) {
+  const { actor, person } = await sender(c, i);
+  const viaThread = i.requestId == null;
+  const requestId = i.requestId ?? (i.replyToMessageId != null ? await requests.findRequestByTelegramMessage(c.db, i.chat.id, i.replyToMessageId) : null);
+  if (requestId == null) {
+    await reply(c, i, copy.usage.done);
+    return result("status.no-target");
+  }
+  const note = i.note?.trim() || null;
+  try {
+    const res = await requests.setStatus(c.db, actor, requestId, i.status === "waiting" ? { status: i.status, customStatus: note } : { status: i.status, note });
+    // a group fallback ("@alice, ✅ #12 is done") will say it in this chat already
+    if (!res.effects.some((e) => e.kind === "notify" && e.message.chatId === i.chat.id))
+      await reply(c, i, copy.statusSet(res.request), { requestId });
+    return result("status.set", requestId, res.effects);
+  } catch (e) {
+    // only inside the thread (they can see it anyway) do we name the parties; "/done 12" from a stranger gets the generic error
+    if (!(e instanceof PermissionError) || !viaThread) throw e;
+    const r = await requests.getById(c.db, systemActor(), requestId);
+    await requests.addThreadMessage(c.db, actor, {
+      requestId,
+      chatId: i.chat.id,
+      messageId: i.message.message_id,
+      replyToMessageId: i.replyToMessageId,
+      fromId: person.id,
+      text: textOf(i.message),
+      link: messageLink(i.chat, i.message.message_id),
+    });
+    await reply(c, i, copy.cantChange(r, await people.getById(c.db, r.requesterId), await people.getById(c.db, r.assigneeId)), { requestId });
+    return result("status.forbidden", requestId);
   }
 }
 

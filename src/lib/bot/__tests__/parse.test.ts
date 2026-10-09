@@ -70,8 +70,17 @@ describe("parseUpdate: /request", () => {
     ["bare /request -> help", () => msg("/request"), { kind: "help-mention" }],
     ["/request@otherbot -> ignore", () => msg("/request@otherbot fix it"), { kind: "ignore" }],
     ["reply /request to a forum topic root is not a reply",
-      () => msg("/request fix it", { message_thread_id: 5, reply_to_message: msg("Topic", { message_id: 5, from: bob }) }),
+      () => msg("/request fix it", { message_thread_id: 5, is_topic_message: true, reply_to_message: msg("Topic", { message_id: 5, from: bob }) }),
       { kind: "request", requester: fromAlice, assignee: toAdmin, body: "fix it", source: null }],
+    ["reply /request in a plain supergroup carries message_thread_id = the chain root: still a reply",
+      () => msg("/request", { from: alice, message_thread_id: 500, reply_to_message: msg("projector is broken", { message_id: 500, from: bob }) }),
+      { kind: "request", requester: { by: "user", user: bob }, assignee: fromAlice, body: "projector is broken", source: { message_id: 500 } }],
+    ["the topic-created service message is never a source",
+      () => msg("/request fix it", { message_thread_id: 6, reply_to_message: msg(undefined, { message_id: 6, forum_topic_created: { name: "Ops" } }) }),
+      { kind: "request", requester: fromAlice, body: "fix it", source: null }],
+    ["reply /request to a bot message: the bot is never the requester",
+      () => msg("/request @bob fix it", { reply_to_message: msg("📝 #12 for @bob", { from: bot }) }),
+      { kind: "request", requester: fromAlice, assignee: toBob, body: "fix it", source: null }],
   ];
   it.each(cases)("%s", (_n, m, expected) => expect(parse(m())).toMatchObject(expected));
 });
@@ -135,7 +144,22 @@ describe("parseUpdate: append, threads, replies to the bot", () => {
       { kind: "thread", replyToMessageId: 67 }],
     ["plain message, not a reply -> ignore", () => msg("hello all"), { kind: "ignore" }],
     ["plain message in a forum topic (implicit reply to topic root) -> ignore",
-      () => msg("hello", { message_thread_id: 7, reply_to_message: msg("Topic", { message_id: 7 }) }), { kind: "ignore" }],
+      () => msg("hello", { message_thread_id: 7, is_topic_message: true, reply_to_message: msg("Topic", { message_id: 7 }) }), { kind: "ignore" }],
+    ["plain reply in a plain supergroup to the chain root -> thread",
+      () => msg("I'll bring a spare", { message_thread_id: 68, reply_to_message: msg("hi", { message_id: 68, from: bob }) }),
+      { kind: "thread", replyToMessageId: 68 }],
+    ["plain reply to the bot's chain-root confirmation -> pending-reply",
+      () => msg("need two", { message_thread_id: 69, reply_to_message: msg("📝 #12", { message_id: 69, from: bot }) }),
+      { kind: "pending-reply", botMessageId: 69 }],
+    ["sticker reply -> thread with a marker, so the chain keeps going",
+      () => msg(undefined, { sticker: { file_id: "st" }, reply_to_message: msg("hi", { message_id: 70, from: bob }) } as Partial<TgMessage>),
+      { kind: "thread", replyToMessageId: 70, text: "(sticker)" }],
+    ["voice note reply -> thread with a marker",
+      () => msg(undefined, { voice: { file_id: "v" }, reply_to_message: msg("hi", { message_id: 71, from: bob }) } as Partial<TgMessage>),
+      { kind: "thread", text: "(voice note)" }],
+    ["sticker reply to the bot -> ignore (nothing to append)",
+      () => msg(undefined, { sticker: { file_id: "st" }, reply_to_message: msg("📝 #12", { message_id: 72, from: bot }) } as Partial<TgMessage>),
+      { kind: "ignore" }],
   ];
   it.each(cases)("%s", (_n, m, expected) => expect(parse(m())).toMatchObject(expected));
 });
@@ -150,11 +174,35 @@ describe("parseUpdate: list commands and /start", () => {
       { kind: "list", command: "with", who: { by: "user", user: bob } }],
     ["/with nobody -> who null", () => msg("/with"), { kind: "list", command: "with", who: null }],
     ["/status 12", () => msg("/status 12"), { kind: "list", command: "status", requestId: 12 }],
-    ["/done #12", () => msg("/done #12"), { kind: "list", command: "done", requestId: 12 }],
-    ["/done without id -> null", () => msg("/done"), { kind: "list", command: "done", requestId: null }],
     ["/start code", () => msg("/start abc123", { chat: dm }), { kind: "start", code: "abc123", chat: dm }],
     ["/start alone", () => msg("/start", { chat: dm }), { kind: "start", code: null }],
+    ["/start in a group -> ignore (DM only)", () => msg("/start"), { kind: "ignore" }],
     ["unknown command -> ignore", () => msg("/frobnicate"), { kind: "ignore" }],
+  ];
+  it.each(cases)("%s", (_n, m, expected) => expect(parse(m())).toMatchObject(expected));
+});
+
+describe("parseUpdate: status commands", () => {
+  const inThread = (text: string) => msg(text, { from: bob, reply_to_message: msg("Asha: on my way", { message_id: 80 }) });
+  const cases: [string, () => TgMessage, object][] = [
+    ["/done #12", () => msg("/done #12"), { kind: "status", status: "done", requestId: 12, replyToMessageId: null, note: null }],
+    ["/done 12 note, no reply", () => msg("/done 12 projector fixed"), { kind: "status", requestId: 12, note: "projector fixed" }],
+    ["/done without id or reply", () => msg("/done"), { kind: "status", status: "done", requestId: null, replyToMessageId: null }],
+    ["/done note as a reply in a thread", () => inThread("/done projector fixed"),
+      { kind: "status", status: "done", requestId: null, replyToMessageId: 80, note: "projector fixed", from: bob }],
+    ["/done 3 spare cables as a reply: the number is the note", () => inThread("/done 3 spare cables"),
+      { kind: "status", requestId: null, note: "3 spare cables" }],
+    ["/done #12 as a reply: explicit id wins", () => inThread("/done #12"), { kind: "status", requestId: 12, replyToMessageId: 80 }],
+    ["/doing", () => inThread("/doing"), { kind: "status", status: "in_progress", note: null }],
+    ["/waiting reason", () => inThread("/waiting parts from Panjim"), { kind: "status", status: "waiting", note: "parts from Panjim" }],
+    ["/decline reason", () => inThread("/decline@EtmBot no budget"), { kind: "status", status: "declined", note: "no budget" }],
+    ["/reopen", () => inThread("/reopen"), { kind: "status", status: "open" }],
+    ["@bot done note as a reply", () => inThread("@etmbot done, projector fixed"),
+      { kind: "status", status: "done", replyToMessageId: 80, note: "projector fixed" }],
+    ["@bot on it as a reply to the bot's own message",
+      () => msg("@EtmBot on it", { reply_to_message: msg("📝 #12 for @bob", { message_id: 81, from: bot }) }),
+      { kind: "status", status: "in_progress", replyToMessageId: 81 }],
+    ["@bot donate chairs is a request, not done", () => msg("@etmbot donate chairs"), { kind: "request", body: "donate chairs" }],
   ];
   it.each(cases)("%s", (_n, m, expected) => expect(parse(m())).toMatchObject(expected));
 });

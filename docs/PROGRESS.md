@@ -39,7 +39,7 @@ One line per task. The details are in each task's file under `docs/progress/`.
 
 - **Spec changes made after the tasks were cut.** None of these is built yet:
   - c04878d: verb-bucket grouping. Needs `services/grouping.ts`, `assignee_seen_at`, stat tiles, the People strip, and grouped output from MCP and the bot.
-  - d9aed80: status commands (`/doing`, `/waiting`, `/decline`, `/reopen`, and reply-chain `/done`) from anywhere in a thread.
+  - d9aed80: status commands from anywhere in a thread. Built in verify round 1 (below).
 - **Duplicate bot code.** `handlers.ts` still has branches for `start`, `login-confirm`, `status-button` and `membership` that the route never reaches. The route uses callbacks.ts and membership.ts. Delete one copy. The callbacks.ts copy is stricter: it allows only the assignee and ignores a double tap.
 - A wrong webhook secret returns 401, not 200.
 - After a button tap, the DM loses its formatting.
@@ -55,3 +55,30 @@ One line per task. The details are in each task's file under `docs/progress/`.
 - claude.ai cannot use the MCP server: its connectors need OAuth.
 - Detail page: anyone who can see a request can rename it. The SPEC says only the assignee or an admin can.
 - The databases `etm_mcp_server` and `etm_web_admin` were left on :5545.
+
+## Verify round 1 (2026-10-09)
+
+Reviewer findings, each checked against the code. Every fix has a failing test written first.
+
+| # | Finding | Outcome | Why / what changed |
+|---|---------|---------|--------------------|
+| 1 | `replyOf` drops replies in plain supergroups | fixed | Telegram sets `message_thread_id` to the reply chain's root outside forums too. A reply is now ignored only when `is_topic_message` and it points at the topic root, or the target has `forum_topic_created`. Parse tests cover plain-supergroup replies to the chain root (human and bot). |
+| 2 | Status commands missing; `@bot done` creates a request | fixed | New `status` intent: `/done /doing /waiting /decline /reopen` and a leading `@bot done` / `@bot on it`. Resolves the request from an explicit id or the reply chain, then calls `setStatus` with the note (`/waiting` reason = custom label). A non-party replying in the thread gets "Only @assignee or @requester can change #N" and their message lands in the thread. An explicit `/done 12` from outside gets the generic error, so ids can't be probed for names. In a thread, a leading number is part of the note unless written `#12` or alone. The assignee's bare "done"/"✅" thread reply gets a "Mark #N done?" button (`st:N:done`). A replied-to bot message is never a request source, so a bot can't be the requester. |
+| 3 | Reply chains break at stickers, voice notes etc. | fixed | A reply with no text, photo or document is stored as a thread message with a marker ("(sticker)", "(voice note)", …), so later replies still chain. A media-only reply to the bot itself is still ignored. |
+| 4 | `/append` on a thread message is silent and does nothing | fixed | `onAppend` first uses the request the replied-to message is tied to. `requests.append` promotes a `thread` row of the same request to `append` and extends the body (one `request.append` audit row). A message tied to another request gets "That message is already in #N"; a retry stays silent. |
+| 5 | Any reply to any tied bot message appends | fixed | Only a reply to the request's `bot_confirm` message appends; replies to the bot's other messages are thread messages (no body change, no bot reply). |
+| 6 | `/start` in a group handled as DM `/start` | fixed | `parseUpdate` returns `start` only in private chats, so `started_bot` is never set from a group. |
+| 7 | `mergeInto` misses `pending_prompts` | fixed | Moves `requester_id`, `assignee_id`, `created_by_id` before deleting the placeholder. DB test merges a placeholder referenced by a prompt. |
+| 8 | Replies to a used/expired prompt are lost | fixed | `findRequestByTelegramMessage` resolves a prompt message to the request created from it (same chat + mention message), so later replies thread. A reply to an expired, unused prompt gets "That prompt expired. Send /request @bob … again." (`prompts.find` read). |
+| 9 | `safeNext` allows `/	/evil.com` | fixed | Rejects control characters and backslashes. Unit tests for tab, newline, CR. |
+| 10 | Stale session cookie moves usernames | fixed | `actorFromSession` no longer passes the cookie's username and no longer re-upserts on a username mismatch. Usernames come only from Telegram updates. |
+| 11 | `/start` in a group sets `started_bot` | fixed | Same fix as 6. |
+| 12 | Creator who is not a party can change status | fixed | `canManage` is now requester, assignee, admin, system or AI. `canView` still includes the creator. |
+| 13 | `mergeInto` FK violation (duplicate of 7) | fixed | Same fix as 7. |
+| 14 | AI `setField` can overwrite a lock set mid-flight | fixed | AI writes put `lock = false` in the UPDATE's WHERE; no row means `changed: false` and no audit row. Tested with `tests/helpers/racy.ts`, which runs a human write between the read and the write. |
+| 15 | Titler writes outside the try; question length unbounded | fixed | All writes after the model call are in the same try (failure -> `ai_status` failed). The model's question is clipped to 500 chars. |
+| 16 | `create` not race/retry safe | fixed | The `request_messages` insert uses `returning()`. If another run claimed a message first, the new request is deleted (its messages cascade) and the winner is returned as a duplicate, with no audit row. Tested with the racy helper. |
+
+Also: `setup-bot.mjs` registers the new commands; `/help` and `/settings` list them.
+Checks: tsc 3s, lint 9s (0 errors, 1 old warning), `pnpm test` 274 tests in 7.1s, `pnpm build` 15s, `pnpm e2e` passed in 30.8s.
+

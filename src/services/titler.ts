@@ -45,6 +45,7 @@ export async function titleRequest(db: DbClient, requestId: number, deps: Titler
   const before = await requests.getById(db, actor, requestId);
   const [requester, assignee] = await Promise.all([people.getById(db, before.requesterId), people.getById(db, before.assigneeId)]);
 
+  let titled = false;
   let out;
   try {
     out = await generateTitle(
@@ -58,19 +59,18 @@ export async function titleRequest(db: DbClient, requestId: number, deps: Titler
       },
       { fetch: deps.fetch, apiKey, model: deps.model || process.env.OPENROUTER_MODEL || DEFAULT_MODEL },
     );
+    // only touch what differs, so the timeline isn't padded with no-op AI rows
+    titled = out.title !== before.title && (await requests.setTitle(db, actor, requestId, out.title)).changed;
+    if (out.priority !== before.priority) await requests.setPriority(db, actor, requestId, out.priority);
+    // a null due from the model never clears a due someone already set
+    if (out.dueAt && out.dueAt.getTime() !== before.dueAt?.getTime()) await requests.setDue(db, actor, requestId, out.dueAt);
+    if (out.question) await aiContext.addQuestion(db, actor, { text: out.question, requestId });
+    await requests.setAiState(db, actor, requestId, { aiStatus: "done", ...(out.question ? { aiQuestion: out.question } : {}) });
   } catch (err) {
     console.error(`titler #${requestId} failed`, err);
     await requests.setAiState(db, actor, requestId, { aiStatus: "failed" });
     return;
   }
-
-  // only touch what differs, so the timeline isn't padded with no-op AI rows
-  const titled = out.title !== before.title && (await requests.setTitle(db, actor, requestId, out.title)).changed;
-  if (out.priority !== before.priority) await requests.setPriority(db, actor, requestId, out.priority);
-  // a null due from the model never clears a due someone already set
-  if (out.dueAt && out.dueAt.getTime() !== before.dueAt?.getTime()) await requests.setDue(db, actor, requestId, out.dueAt);
-  if (out.question) await aiContext.addQuestion(db, actor, { text: out.question, requestId });
-  await requests.setAiState(db, actor, requestId, { aiStatus: "done", ...(out.question ? { aiQuestion: out.question } : {}) });
 
   if (titled && before.botConfirmChatId && before.botConfirmMessageId) {
     const msg = confirmationMessage({ id: requestId, title: out.title }, assignee);

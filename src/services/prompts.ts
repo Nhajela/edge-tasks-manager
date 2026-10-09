@@ -68,3 +68,12 @@ export async function consume(
   await audit.record(db, actor, { action: "prompt.consume", entityType: "prompt", entityId: row.id });
   return row;
 }
+
+/** The prompt behind a bot message, live or not (so a late reply can be told it expired). */
+export async function find(db: DbClient, chatId: number, promptMessageId: number): Promise<PendingPrompt | null> {
+  const [row] = await db
+    .select()
+    .from(pendingPrompts)
+    .where(and(eq(pendingPrompts.chatId, chatId), eq(pendingPrompts.promptMessageId, promptMessageId)));
+  return row ?? null;
+}

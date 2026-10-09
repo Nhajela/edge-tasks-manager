@@ -72,4 +72,26 @@ describe("titleRequest", () => {
     expect(r.aiStatus).toBe("failed");
     expect(r.title).toBe(request.title);
   });
+
+  it("clips a rambling model question instead of failing the run", async () => {
+    const { request } = await makeRequest(db);
+    await titleRequest(db, request.id, { apiKey: "k", model: "m", fetch: aiFetch({ ...OUT, question: "why ".repeat(2000) }), now, tg: async () => ({}) });
+    const r = await requests.getById(db, aiActor(), request.id);
+    expect(r.aiStatus).toBe("done");
+    expect(r.aiQuestion!.length).toBeLessThanOrEqual(500);
+  });
+
+  it("a failed write after the model answered marks ai_status failed, not pending forever", async () => {
+    const { request } = await makeRequest(db);
+    let inserts = 0;
+    const flaky = new Proxy(db, {
+      get(t, p) {
+        const v = Reflect.get(t, p);
+        if (p === "insert" && inserts++ === 0) return () => { throw new Error("db blip"); };
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    await titleRequest(flaky, request.id, { apiKey: "k", model: "m", fetch: aiFetch(OUT), now, tg: async () => ({}) });
+    expect((await requests.getById(db, aiActor(), request.id)).aiStatus).toBe("failed");
+  });
 });

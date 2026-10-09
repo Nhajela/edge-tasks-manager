@@ -18,6 +18,7 @@ const CHEATS: { cmd: string; what: string }[] = [
   { cmd: "Reply to the bot's “#12” message", what: "Your text is added to #12. Replies to a request's messages show up in its thread." },
   { cmd: "/mine · /raised · /with @bob", what: "Open requests to you, from you, or between you and Bob." },
   { cmd: "/status 12 · /done 12", what: "Check or finish #12." },
+  { cmd: "Reply with /done · /doing · /waiting · /decline · /reopen", what: "Changes the status of the request that message belongs to. Add a note after it." },
 ];
 
 export default async function SettingsPage() {

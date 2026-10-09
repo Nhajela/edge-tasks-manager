@@ -4,7 +4,9 @@ import { actorFor, fakeChatId, makePerson, makeRequest } from "@tests/factories"
 import { aiActor, systemActor } from "@/lib/actor";
 import { NotFoundError, PermissionError, ValidationError } from "@/services/errors";
 import * as botMessages from "@/services/botMessages";
+import * as prompts from "@/services/prompts";
 import * as requests from "@/services/requests";
+import { racyDb } from "@tests/helpers/racy";
 
 const db = testDb();
 
@@ -283,5 +285,68 @@ describe("lists", () => {
     await expect(requests.listAll(db, actorFor(me), {})).rejects.toBeInstanceOf(PermissionError);
     const all = await requests.listAll(db, actorFor(me, { isAdmin: true }), { personId: bob.id, status: "all", limit: 50 });
     expect(all.items.length).toBe(3);
+  });
+});
+
+describe("verify round 1", () => {
+  it("the creator who is neither requester nor assignee can view but not change status", async () => {
+    const creator = await makePerson(db);
+    const { request } = await makeRequest(db, { by: creator });
+    expect((await requests.getById(db, actorFor(creator), request.id)).id).toBe(request.id);
+    await expect(requests.setStatus(db, actorFor(creator), request.id, { status: "done" })).rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("an AI title write loses to a human lock that lands between its read and its write", async () => {
+    const { request, assignee } = await makeRequest(db);
+    const racy = racyDb(db, () => requests.setTitle(db, actorFor(assignee), request.id, "Human title"));
+    const res = await requests.setTitle(racy, aiActor(), request.id, "AI title");
+    expect(res.changed).toBe(false);
+    const d = await requests.getDetail(db, systemActor(), request.id);
+    expect(d.request).toMatchObject({ title: "Human title", titleLocked: true });
+    expect(d.timeline.map((t) => t.action)).toEqual(["request.create", "request.title"]);
+  });
+
+  it("create: losing a race for the same Telegram message returns the winner, leaves no orphan", async () => {
+    const [requester, assignee] = [await makePerson(db), await makePerson(db)];
+    const chatId = fakeChatId();
+    const input = { requesterId: requester.id, assigneeId: assignee.id, body: "fix it", chatId, messages: [{ messageId: 31, text: "fix it" }] };
+    const actor = actorFor(assignee, { via: "telegram" });
+    let winner = 0;
+    const racy = racyDb(db, async () => (winner = (await requests.create(db, actor, input)).request.id));
+    const res = await requests.create(racy, actor, input);
+    expect(res).toMatchObject({ duplicate: true, request: { id: winner }, effects: [] });
+    const mine = await requests.listRaised(db, actorFor(requester), { status: "all" });
+    expect(mine.items.map((r) => r.id)).toEqual([winner]);
+  });
+
+  it("append on a message already in the thread moves it into the body; on another request it says which", async () => {
+    const { request, requester } = await makeRequest(db, { body: "body" });
+    const chatId = request.chatId!;
+    const actor = actorFor(requester, { via: "telegram" });
+    const msg = { requestId: request.id, chatId, messageId: 5151, fromId: requester.id, text: "also an HDMI adapter" };
+    await requests.addThreadMessage(db, actor, msg);
+    const res = await requests.append(db, actor, msg);
+    expect(res.duplicate).toBe(false);
+    const d = await requests.getDetail(db, systemActor(), request.id);
+    expect(d.request.body).toBe("body\n\nalso an HDMI adapter");
+    expect(d.messages.filter((m) => m.messageId === 5151).map((m) => m.kind)).toEqual(["append"]);
+    expect(d.timeline.map((t) => t.action)).toEqual(["request.create", "request.thread", "request.append"]);
+    // a retry of the same append is a silent duplicate of this request
+    expect(await requests.append(db, actor, msg)).toMatchObject({ duplicate: true, duplicateOf: request.id });
+    const other = await makeRequest(db, { requester, chatId });
+    expect(await requests.append(db, actor, { ...msg, requestId: other.request.id })).toMatchObject({ duplicate: true, duplicateOf: request.id });
+  });
+
+  it("a reply to a consumed 'What should @bob do?' prompt resolves to the request it created", async () => {
+    const [alice, bob] = [await makePerson(db), await makePerson(db)];
+    const chatId = fakeChatId();
+    const actor = actorFor(alice, { via: "telegram" });
+    await prompts.create(db, actor, { chatId, promptMessageId: 700, requesterId: alice.id, assigneeId: bob.id, sourceMessageId: 699 });
+    expect(await requests.findRequestByTelegramMessage(db, chatId, 700)).toBeNull();
+    await prompts.consume(db, actor, { chatId, promptMessageId: 700 });
+    const { request } = await requests.create(db, actor, {
+      requesterId: alice.id, assigneeId: bob.id, body: "carry speakers", chatId, sourceMessageId: 699, messages: [{ messageId: 701, text: "carry speakers" }],
+    });
+    expect(await requests.findRequestByTelegramMessage(db, chatId, 700)).toBe(request.id);
   });
 });

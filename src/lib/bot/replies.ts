@@ -17,9 +17,23 @@ export const added = (id: number) => `➕ Added to #${id}`;
 
 export const alreadyTracked = (id: number) => `That message is already #${id}.`;
 
+export const alreadyIn = (id: number) => `That message is already in #${id}.`;
+
 export const prompt = (assignee: Person | null) => `What should ${name(assignee)} do? Reply to this message with the details.`;
 
 export const done = (r: Request) => `✅ #${r.id} is done: <b>${esc(r.title)}</b>`;
+
+/** After /done /doing /waiting /decline /reopen. */
+export const statusSet = (r: Request) =>
+  r.status === "done" ? done(r) : `#${r.id} is now ${esc(r.customStatus || STATUS_LABEL[r.status])}: <b>${esc(r.title)}</b>`;
+
+export const cantChange = (r: Request, requester: Person | null, assignee: Person | null) =>
+  `Only ${name(assignee)} or ${name(requester)} can change #${r.id}.`;
+
+export const markDone = (id: number) => `Mark #${id} done?`;
+
+export const promptExpired = (assignee: Person | null) =>
+  `That prompt expired. Send <code>/request ${name(assignee)} …</code> again.`;
 
 export function list(heading: string, items: Request[], total: number, now: Date, empty: string) {
   if (!items.length) return empty;
@@ -41,6 +55,9 @@ export const HELP = [
   "/raised: open requests you asked for",
   "/with @bob: open requests between you and @bob",
   "/status 12 · /done 12",
+  "",
+  "Reply to any message of a request:",
+  "/done · /doing · /waiting &lt;why&gt; · /decline &lt;why&gt; · /reopen",
 ].join("\n");
 
 export const HELP_MENTION = `Mention me with an @person and what you need, e.g. <code>@${esc(BOT_USERNAME || "bot")} @bob fix the projector</code>. Send /help for more.`;
@@ -50,7 +67,7 @@ export const usage = {
   append: "Reply to a message with /append to add it to that person's latest request, or use <code>/append 12</code>.",
   with: "Who with? E.g. <code>/with @bob</code>",
   status: "Which request? E.g. <code>/status 12</code>",
-  done: "Which request? E.g. <code>/done 12</code>",
+  done: "Reply to a request message, or use <code>/done 12</code>.",
 };
 
 export const noAppendTarget = "I couldn't find an open request to add this to. Try <code>/append 12</code>.";

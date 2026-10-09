@@ -11,8 +11,12 @@ export const isParticipant = (actor: Actor, r: Parties) =>
 export const canView = (actor: Actor, r: Parties) =>
   actor.isAdmin || actor.kind === "system" || actor.kind === "ai" || isParticipant(actor, r);
 
-/** Status, comments, title/priority/due: same people as canView (the AI is further limited by lock flags). */
-export const canManage = canView;
+/** Status, comments, title/priority/due: the requester, the assignee, admins, system/AI (not a mere creator; SPEC). */
+export const canManage = (actor: Actor, r: Parties) =>
+  actor.isAdmin ||
+  actor.kind === "system" ||
+  actor.kind === "ai" ||
+  (actor.personId != null && (actor.personId === r.requesterId || actor.personId === r.assigneeId));
 
 export function requireView(actor: Actor, r: Parties) {
   if (!canView(actor, r)) throw new PermissionError("Only the people on this request can see it.");

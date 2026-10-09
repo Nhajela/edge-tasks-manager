@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, gt, inArray, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { attachments, botMessages, people, requestMessages, requests } from "@/db/schema";
+import { attachments, botMessages, pendingPrompts, people, requestMessages, requests } from "@/db/schema";
 import { CLOSED, PRIORITIES, STATUSES, STATUS_LABEL } from "@/lib/constants";
 import { heuristicTitle } from "@/lib/title";
 import type { AiStatus, Attachment, AuditEntry, Person, Priority, Request, RequestMessage, Status } from "@/lib/types";
@@ -63,7 +63,8 @@ export type MessageAddInput = {
 };
 
 export type Result = { request: Request; effects: Effect[] };
-export type AddResult = Result & { duplicate: boolean };
+/** `duplicateOf`: the request that already holds this Telegram message (a retry, or a message tracked elsewhere). */
+export type AddResult = Result & { duplicate: boolean; duplicateOf?: number };
 export type FieldResult = { request: Request; changed: boolean };
 
 export type StatusFilter = "open" | "done" | "all" | Status;
@@ -159,8 +160,9 @@ export async function create(db: DbClient, actor: Actor, input: CreateInput): Pr
       messageLink: input.messageLink ?? messages[0]?.link ?? null,
     })
     .returning();
-  if (input.chatId != null && messages.length)
-    await db
+  if (input.chatId != null && messages.length) {
+    // the (chat, message) rows are the dedupe key: if a concurrent run claimed one first, it wins and this request goes
+    const claimed = await db
       .insert(requestMessages)
       .values(
         messages.map((m) => ({
@@ -174,7 +176,26 @@ export async function create(db: DbClient, actor: Actor, input: CreateInput): Pr
           kind: "original" as const,
         })),
       )
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: requestMessages.id });
+    if (claimed.length < messages.length) {
+      const [winner] = await db
+        .select({ requestId: requestMessages.requestId })
+        .from(requestMessages)
+        .where(
+          and(
+            eq(requestMessages.chatId, input.chatId),
+            inArray(requestMessages.messageId, messages.map((m) => m.messageId)),
+            ne(requestMessages.requestId, request.id),
+          ),
+        )
+        .limit(1);
+      if (winner) {
+        await db.delete(requests).where(eq(requests.id, request.id)); // its messages cascade
+        return { request: await load(db, winner.requestId), effects: [], duplicate: true };
+      }
+    }
+  }
   await insertAttachments(db, request.id, input.chatId, input.attachments);
   await audit.record(db, actor, {
     action: "request.create",
@@ -206,7 +227,17 @@ async function addMessage(db: DbClient, actor: Actor, input: MessageAddInput, ki
       })
       .onConflictDoNothing()
       .returning({ id: requestMessages.id });
-    if (!inserted.length) return { request, effects: [], duplicate: true };
+    if (!inserted.length) {
+      const same = and(eq(requestMessages.chatId, input.chatId), eq(requestMessages.messageId, input.messageId));
+      const [existing] = await db.select({ requestId: requestMessages.requestId, kind: requestMessages.kind }).from(requestMessages).where(same);
+      // /append on a reply already in this request's thread: promote it into the body
+      const promoted =
+        kind === "append" &&
+        existing?.requestId === request.id &&
+        existing.kind === "thread" &&
+        (await db.update(requestMessages).set({ kind: "append" }).where(and(same, eq(requestMessages.kind, "thread"))).returning({ id: requestMessages.id })).length > 0;
+      if (!promoted) return { request, effects: [], duplicate: true, duplicateOf: existing?.requestId ?? request.id };
+    }
   }
   if (kind === "append")
     [request] = await db
@@ -268,6 +299,14 @@ export async function findRequestByTelegramMessage(db: DbClient, chatId: number,
         .select({ id: sql<number>`${botMessages.requestId}` })
         .from(botMessages)
         .where(and(eq(botMessages.chatId, chatId), eq(botMessages.telegramMessageId, messageId), sql`${botMessages.requestId} IS NOT NULL`)),
+    )
+    .unionAll(
+      // a "What should @bob do?" prompt belongs to the request its reply created (same chat + mention message)
+      db
+        .select({ id: requests.id })
+        .from(pendingPrompts)
+        .innerJoin(requests, and(eq(requests.chatId, pendingPrompts.chatId), eq(requests.sourceMessageId, pendingPrompts.sourceMessageId)))
+        .where(and(eq(pendingPrompts.chatId, chatId), eq(pendingPrompts.promptMessageId, messageId))),
     )
     .limit(1);
   return row?.id ?? null;
@@ -355,8 +394,10 @@ async function setField<F extends LockedField>(db: DbClient, actor: Actor, id: n
   const [request] = await db
     .update(requests)
     .set({ [field]: value, ...(isAi ? {} : { [LOCK[field]]: true }), updatedAt: new Date() })
-    .where(eq(requests.id, id))
+    // the AI re-checks the lock in the write itself: a human may have locked it since the read
+    .where(isAi ? and(eq(requests.id, id), eq(requests[LOCK[field]], false)) : eq(requests.id, id))
     .returning();
+  if (!request) return { request: await load(db, id), changed: false };
   await audit.record(db, actor, {
     action: ACTION[field],
     entityType: "request",

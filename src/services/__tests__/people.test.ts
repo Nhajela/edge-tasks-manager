@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { testDb } from "@tests/helpers/db";
-import { fakeTelegramId, makePerson, makeRequest, uniqueName } from "@tests/factories";
-import { systemActor } from "@/lib/actor";
+import { eq } from "drizzle-orm";
+import { actorFor, fakeChatId, fakeTelegramId, makePerson, makeRequest, uniqueName } from "@tests/factories";
+import { pendingPrompts } from "@/db/schema";
+import { actorFromSession, systemActor } from "@/lib/actor";
+import * as prompts from "@/services/prompts";
 import * as audit from "@/services/audit";
 import * as people from "@/services/people";
 import * as requests from "@/services/requests";
@@ -73,5 +76,32 @@ describe("people.upsertFromTelegram", () => {
   it("superadmin resolves SUPERADMIN_USERNAME to a person (placeholder if unseen)", async () => {
     const admin = await people.superadmin(db, sys);
     expect(admin?.username).toBe("etm_admin_test");
+  });
+});
+
+describe("verify round 1", () => {
+  it("merging a placeholder that a pending prompt points at moves the prompt too", async () => {
+    const name = uniqueName("bob");
+    const placeholder = await people.upsertFromTelegram(db, sys, { username: name });
+    const real = await makePerson(db, { username: null });
+    const asker = await makePerson(db);
+    const p = await prompts.create(db, actorFor(asker, { via: "telegram" }), {
+      chatId: fakeChatId(), promptMessageId: 1, requesterId: placeholder.id, assigneeId: placeholder.id,
+    });
+    const merged = await people.upsertFromTelegram(db, sys, { telegramId: real.telegramId, username: name });
+    expect(merged.id).toBe(real.id);
+    expect(await people.getById(db, placeholder.id)).toBeNull();
+    const [row] = await db.select().from(pendingPrompts).where(eq(pendingPrompts.id, p.id));
+    expect(row).toMatchObject({ requesterId: real.id, assigneeId: real.id });
+  });
+
+  it("a web session never moves a username: a stale cookie can't take @foo from its new owner", async () => {
+    const foo = uniqueName("foo");
+    const alice = await makePerson(db, { username: uniqueName("bar"), startedBot: true });
+    const bob = await makePerson(db, { username: foo });
+    const { person } = await actorFromSession(db, { telegramId: String(alice.telegramId), username: foo, firstName: "Alice" });
+    expect(person.id).toBe(alice.id);
+    expect((await people.getById(db, alice.id))?.username).toBe(alice.username);
+    expect((await people.getById(db, bob.id))?.username).toBe(foo);
   });
 });

@@ -6,7 +6,8 @@ const APP_LINK_TTL_MIN = 3 * 24 * 60;
 
 /** Only same-site paths ("/inbox", "/r/12"), never "//evil.com" or absolute URLs. */
 export function safeNext(next: string | null | undefined): string {
-  return next && next.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/";
+  // browsers drop tabs/newlines while parsing, so "/\t/evil.com" would become "//evil.com"
+  return next && next.startsWith("/") && !next.startsWith("//") && !/[\\\x00-\x1f\x7f]/.test(next) ? next : "/";
 }
 
 /**

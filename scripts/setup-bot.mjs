@@ -34,7 +34,11 @@ await call("setMyCommands", {
     { command: "raised", description: "Open requests you raised" },
     { command: "with", description: "Open requests between you and someone: /with @bob" },
     { command: "status", description: "Status of one request: /status 12" },
-    { command: "done", description: "Mark a request done: /done 12" },
+    { command: "done", description: "Reply in a request's thread (or /done 12) to mark it done" },
+    { command: "doing", description: "Reply in a request's thread: you're on it" },
+    { command: "waiting", description: "Reply in a request's thread: /waiting parts from Panjim" },
+    { command: "decline", description: "Reply in a request's thread: /decline <why>" },
+    { command: "reopen", description: "Reply in a request's thread to open it again" },
     { command: "help", description: "How to use Edge Tasks" },
   ],
 });

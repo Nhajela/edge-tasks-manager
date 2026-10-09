@@ -25,8 +25,9 @@ export const aiActor = (label = "AI titler"): Actor => ({ kind: "ai", personId: 
 /** Web: the logged-in person (created on first visit; logging in goes through the bot, so they started it). */
 export async function actorFromSession(db: DbClient, session: Session): Promise<{ actor: Actor; person: Person }> {
   let person = await people.findByTelegramId(db, session.telegramId);
-  if (!person || !person.startedBot || (session.username && person.username !== session.username.toLowerCase()))
-    person = await people.upsertFromTelegram(db, systemActor(), { ...session, startedBot: true });
+  // usernames come only from Telegram updates: a 60-day cookie's username may since belong to someone else
+  if (!person || !person.startedBot)
+    person = await people.upsertFromTelegram(db, systemActor(), { telegramId: session.telegramId, firstName: session.firstName, startedBot: true });
   return { actor: personActor(person, { via: "web" }), person };
 }
 

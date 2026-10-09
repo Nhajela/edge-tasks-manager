@@ -2,10 +2,11 @@ import { randomInt } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { testDb } from "@tests/helpers/db";
 import { capturingNotifier } from "@tests/helpers/notifier";
-import { fakeChatId, makePerson, makeRequest } from "@tests/factories";
+import { actorFor, fakeChatId, makePerson, makeRequest } from "@tests/factories";
 import { systemActor } from "@/lib/actor";
 import { dueLabel } from "@/lib/format";
 import type { Person } from "@/lib/types";
+import * as botMessages from "@/services/botMessages";
 import * as requests from "@/services/requests";
 import { handleIntent } from "../handlers";
 import type { Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from "../types";
@@ -191,7 +192,7 @@ describe("reply threads", () => {
 });
 
 describe("mention prompt", () => {
-  it("'@bot @bob' asks what bob should do; the reply becomes the request; a second reply is ignored", async () => {
+  it("'@bot @bob' asks what bob should do; the reply becomes the request; a second reply is only thread", async () => {
     const t = setup();
     const [alice, bob] = [await makePerson(db), await makePerson(db)];
     const chat = group();
@@ -207,19 +208,25 @@ describe("mention prompt", () => {
     expect(r).toMatchObject({ requesterId: alice.id, assigneeId: bob.id, body: "carry the speakers to the beach" });
 
     const again = await t.run({ kind: "pending-reply", botMessageId: 1, text: "and the mics", attachments: [], ...ctx(chat, alice, "and the mics") });
-    expect(again.outcome).toBe("pending-reply.unrelated");
+    expect(again).toMatchObject({ outcome: "thread.added", requestId: r.id });
   });
 
-  it("an expired prompt is ignored", async () => {
+  it("an expired prompt is not a request", async () => {
     const t = setup();
     const [alice, bob] = [await makePerson(db), await makePerson(db)];
     const chat = group();
     await t.run({ kind: "prompt", assignee: { by: "username", username: bob.username! }, ...ctx(chat, alice, "@bot @bob") });
     const late = setup(new Date(NOW.getTime() + 2 * 3600_000));
     const res = await handleIntent(db, { kind: "pending-reply", botMessageId: 1, text: "x", attachments: [], ...ctx(chat, alice, "x") }, late.deps);
-    expect(res.outcome).toBe("pending-reply.unrelated");
+    expect(res.outcome).toBe("prompt.expired");
   });
 });
+
+const status = (
+  c: MessageCtx,
+  st: Extract<Intent, { kind: "status" }>["status"],
+  over: { requestId?: number | null; replyToMessageId?: number | null; note?: string | null } = {},
+): Intent => ({ kind: "status", status: st, requestId: over.requestId ?? null, replyToMessageId: over.replyToMessageId ?? null, note: over.note ?? null, ...c });
 
 describe("list commands", () => {
   const list = (c: MessageCtx, command: Extract<Intent, { kind: "list" }>["command"], over: { who?: PersonRef; requestId?: number | null } = {}): Intent => ({
@@ -277,17 +284,17 @@ describe("list commands", () => {
     expect(t.sent[2].html).toContain("/status 12");
   });
 
-  it("/done: strangers can't, the assignee can (and the requester is told)", async () => {
+  it("/done 12: strangers can't, the assignee can (and the requester is told)", async () => {
     const t = setup();
     const requester = await makePerson(db, { startedBot: true });
     const { request, assignee } = await makeRequest(db, { requester });
     const chat = group();
-    const no = await t.run(list(ctx(chat, await makePerson(db), "/done"), "done", { requestId: request.id }));
-    expect(no.outcome).toBe("list.error");
+    const no = await t.run(status(ctx(chat, await makePerson(db), "/done"), "done", { requestId: request.id }));
+    expect(no.outcome).toBe("status.error"); // an explicit id from outside: the generic error, no names
     expect((await requests.getById(db, systemActor(), request.id)).status).toBe("open");
 
-    const yes = await t.run(list(ctx(chat, assignee, "/done"), "done", { requestId: request.id }));
-    expect(yes).toMatchObject({ outcome: "done", requestId: request.id });
+    const yes = await t.run(status(ctx(chat, assignee, "/done"), "done", { requestId: request.id }));
+    expect(yes).toMatchObject({ outcome: "status.set", requestId: request.id });
     expect((await requests.getById(db, systemActor(), request.id)).status).toBe("done");
     expect(yes.effects).toContainEqual(expect.objectContaining({ kind: "notify", message: expect.objectContaining({ chatId: requester.telegramId }) }));
     expect(t.sent[1].html).toContain(`#${request.id}`);
@@ -325,5 +332,116 @@ describe("buttons and the rest", () => {
     expect(t.sent[0].buttons?.[0]).toMatchObject({ url: expect.stringContaining("/login?code=") });
     const after = await (await import("@/services/people")).getById(db, p.id);
     expect(after?.startedBot).toBe(true);
+  });
+});
+
+describe("verify round 1: status from anywhere in the thread", () => {
+  async function threaded() {
+    const sourceId = nextId();
+    const made = await makeRequest(db, { messageId: sourceId, title: "Fix projector" });
+    const chat: TgChat = { id: made.request.chatId!, type: "supergroup" };
+    return { ...made, chat, sourceId };
+  }
+
+  it("the assignee replies '/done projector fixed' to a thread message: done, note kept, '#N' reply", async () => {
+    const t = setup();
+    const { request, assignee, chat, sourceId } = await threaded();
+    const res = await t.run(status(ctx(chat, assignee, "/done projector fixed"), "done", { replyToMessageId: sourceId, note: "projector fixed" }));
+    expect(res).toMatchObject({ outcome: "status.set", requestId: request.id });
+    const d = await requests.getDetail(db, systemActor(), request.id);
+    expect(d.request.status).toBe("done");
+    expect(d.timeline.at(-1)).toMatchObject({ action: "request.status", data: expect.objectContaining({ note: "projector fixed" }) });
+    // the requester never started the bot: the "@alice, ✅ #N is done" group fallback says it in this chat
+    expect(t.sent).toHaveLength(0);
+    expect(res.effects).toContainEqual(expect.objectContaining({ message: expect.objectContaining({ chatId: chat.id, kind: "group_fallback" }) }));
+  });
+
+  it("/waiting <reason> sets the custom label; /reopen opens it again", async () => {
+    const t = setup();
+    const { request, requester, chat, sourceId } = await threaded();
+    await t.run(status(ctx(chat, requester, "/waiting parts from Panjim"), "waiting", { replyToMessageId: sourceId, note: "parts from Panjim" }));
+    expect(await requests.getById(db, systemActor(), request.id)).toMatchObject({ status: "waiting", customStatus: "parts from Panjim" });
+    await t.run(status(ctx(chat, requester, "/reopen"), "open", { replyToMessageId: sourceId }));
+    expect(await requests.getById(db, systemActor(), request.id)).toMatchObject({ status: "open", customStatus: null });
+  });
+
+  it("someone else gets 'Only @assignee or @requester can close #N'; their message still lands in the thread", async () => {
+    const t = setup();
+    const { request, assignee, chat, sourceId } = await threaded();
+    const c = ctx(chat, await makePerson(db), "/done");
+    const res = await t.run(status(c, "done", { replyToMessageId: sourceId }));
+    expect(res.outcome).toBe("status.forbidden");
+    expect(t.sent[0].html).toContain(`@${assignee.username}`);
+    expect(t.sent[0].html).toContain(`#${request.id}`);
+    expect(await requests.findRequestByTelegramMessage(db, chat.id, c.message.message_id)).toBe(request.id);
+    expect((await requests.getById(db, systemActor(), request.id)).status).toBe("open");
+  });
+
+  it("no request in the chain: 'Reply to a request message, or use /done 12'", async () => {
+    const t = setup();
+    const res = await t.run(status(ctx(group(), await makePerson(db), "/done"), "done", { replyToMessageId: 42 }));
+    expect(res.outcome).toBe("status.no-target");
+    expect(t.sent[0].html).toMatch(/Reply to a request message/);
+  });
+
+  it("the assignee's bare 'done' reply is a thread message plus a one-tap 'Mark #N done?' button", async () => {
+    const t = setup();
+    const { request, assignee, requester, chat, sourceId } = await threaded();
+    const res = await t.run({ kind: "thread", replyToMessageId: sourceId, text: "done ✅", attachments: [], ...ctx(chat, assignee, "done ✅") });
+    expect(res.outcome).toBe("thread.added");
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0].html).toContain(`Mark #${request.id} done?`);
+    expect(t.sent[0].buttons?.[0]).toMatchObject({ callback_data: `st:${request.id}:done` });
+    // anyone else saying "done" is just conversation
+    await t.run({ kind: "thread", replyToMessageId: sourceId, text: "done", attachments: [], ...ctx(chat, requester, "done") });
+    expect(t.sent).toHaveLength(1);
+  });
+});
+
+describe("verify round 1: replies to bot messages, /append and prompts", () => {
+  it("a reply to a bot message other than the '#N created' confirmation is a thread message, not an append", async () => {
+    const t = setup();
+    const { request } = await makeRequest(db, { body: "body" });
+    const chat: TgChat = { id: request.chatId!, type: "supergroup" };
+    await botMessages.log(db, { chatId: chat.id, kind: "group_fallback", ok: true, telegramMessageId: 555, text: "done", requestId: request.id });
+    const res = await t.run({ kind: "pending-reply", botMessageId: 555, text: "thanks!!", attachments: [], ...ctx(chat, await makePerson(db), "thanks!!") });
+    expect(res).toMatchObject({ outcome: "thread.added", requestId: request.id, effects: [] });
+    expect(t.sent).toHaveLength(0);
+    expect((await requests.getById(db, systemActor(), request.id)).body).toBe("body");
+  });
+
+  it("/append on a message already in the thread moves it into the body", async () => {
+    const t = setup();
+    const { request, requester } = await makeRequest(db, { body: "body" });
+    const chat: TgChat = { id: request.chatId!, type: "supergroup" };
+    const asha = await makePerson(db);
+    const threadMsg = ctx(chat, asha, "also need an HDMI adapter");
+    await requests.addThreadMessage(db, actorFor(asha, { via: "telegram" }), {
+      requestId: request.id, chatId: chat.id, messageId: threadMsg.message.message_id, fromId: asha.id, text: "also need an HDMI adapter",
+    });
+    const payload = threadMsg.message;
+    const res = await t.run({ kind: "append", requestId: null, replyTo: payload, payload, text: payload.text!, attachments: [], ...ctx(chat, requester, "/append", { reply_to_message: payload }) });
+    expect(res).toMatchObject({ outcome: "append.added", requestId: request.id });
+    expect((await requests.getById(db, systemActor(), request.id)).body).toBe("body\n\nalso need an HDMI adapter");
+    expect(t.sent[0].html).toContain(`#${request.id}`);
+  });
+
+  it("a second reply to a used prompt lands in that request's thread; a reply to an expired one is told so", async () => {
+    const t = setup();
+    const [alice, bob] = [await makePerson(db), await makePerson(db)];
+    const chat = group();
+    await t.run({ kind: "prompt", assignee: { by: "username", username: bob.username! }, ...ctx(chat, alice, `@bot @${bob.username}`) });
+    const first = await t.run({ kind: "pending-reply", botMessageId: 1, text: "carry the speakers", attachments: [], ...ctx(chat, alice, "carry the speakers") });
+    const second = await t.run({ kind: "pending-reply", botMessageId: 1, text: "which room?", attachments: [], ...ctx(chat, bob, "which room?") });
+    expect(second).toMatchObject({ outcome: "thread.added", requestId: first.requestId });
+
+    const t2 = setup();
+    const chat2 = group();
+    await t2.run({ kind: "prompt", assignee: { by: "username", username: bob.username! }, ...ctx(chat2, alice, `@bot @${bob.username}`) });
+    const late = setup(new Date(NOW.getTime() + 2 * 3600_000));
+    const res = await handleIntent(db, { kind: "pending-reply", botMessageId: 1, text: "x", attachments: [], ...ctx(chat2, alice, "x") }, late.deps);
+    expect(res.outcome).toBe("prompt.expired");
+    expect(late.sent[0].html).toMatch(/expired/);
+    expect(late.sent[0].html).toContain(`@${bob.username}`);
   });
 });

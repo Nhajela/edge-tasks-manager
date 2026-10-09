@@ -7,6 +7,7 @@ export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const DEFAULT_MODEL = "google/gemini-2.5-flash";
 const TIMEOUT_MS = 20_000;
 const TITLE_MAX = 60;
+const QUESTION_MAX = 500;
 
 export const OUTPUT_SCHEMA = {
   type: "object",
@@ -29,7 +30,8 @@ const Output = z.object({
     .pipe(z.string().min(1)),
   priority: z.enum(["low", "normal", "high", "urgent"]),
   due_at: z.string().nullish().transform(blankToNull),
-  question: z.string().nullish().transform(blankToNull),
+  // the service caps questions at 4000 chars; a rambling model must not fail the whole run
+  question: z.string().nullish().transform((s) => blankToNull(s)?.slice(0, QUESTION_MAX) ?? null),
 });
 
 export type TitleResult = { title: string; priority: Priority; dueAt: Date | null; question: string | null };

@@ -3,6 +3,7 @@
  * Contract between src/lib/bot/parse.ts (pure) and src/lib/bot/handlers.ts (DB + Telegram). Keep stable.
  */
 import type { AttachmentInput } from "@/services/requests";
+import type { Status } from "@/lib/types";
 import type { Effect } from "@/services/types";
 
 export type TgUser = { id: number; is_bot?: boolean; first_name?: string; last_name?: string; username?: string };
@@ -21,8 +22,12 @@ export type TgMessage = {
   date: number;
   chat: TgChat;
   from?: TgUser;
-  /** forum topic id in supergroups with topics */
+  /** forum topic id in forums; in plain supergroups, the root of the reply chain */
   message_thread_id?: number;
+  /** true only for messages sent inside a forum topic */
+  is_topic_message?: boolean;
+  /** set on a forum topic's service message (the root every topic message points at) */
+  forum_topic_created?: object;
   text?: string;
   caption?: string;
   entities?: TgEntity[];
@@ -63,7 +68,7 @@ export type PersonRef =
 /** What every message-borne intent carries: the triggering message and its chat/sender. */
 export type MessageCtx = { message: TgMessage; chat: TgChat; from: TgUser };
 
-export type ListCommand = "mine" | "raised" | "with" | "status" | "done" | "help";
+export type ListCommand = "mine" | "raised" | "with" | "status" | "help";
 
 export type Intent =
   /**
@@ -108,7 +113,12 @@ export type Intent =
   | ({ kind: "pending-reply"; botMessageId: number; text: string; attachments: AttachmentInput[] } & MessageCtx)
   /** `@bot @bob` with no text and no reply: ask "What should @bob do?" and create a pending prompt. */
   | ({ kind: "prompt"; assignee: PersonRef } & MessageCtx)
-  /** /mine /raised /help, /with @bob (`who`), /status 12 and /done 12 (`requestId`; null -> reply with usage). */
+  /**
+   * /done /doing /waiting /decline /reopen (and a leading "@bot done" / "@bot on it"). `requestId` when given ("/done 12"),
+   * else the handler resolves `replyToMessageId` through the reply chain. `note`: the text after it (for /waiting, the label).
+   */
+  | ({ kind: "status"; status: Status; requestId: number | null; replyToMessageId: number | null; note: string | null } & MessageCtx)
+  /** /mine /raised /help, /with @bob (`who`), /status 12 (`requestId`; null -> reply with usage). */
   | ({ kind: "list"; command: ListCommand; who: PersonRef | null; requestId: number | null } & MessageCtx)
   /** /start [code] in a DM: the eci-travel-coop login flow ("Yes, log me in" button), or a plain welcome. */
   | ({ kind: "start"; code: string | null } & MessageCtx)

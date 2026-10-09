@@ -1,5 +1,5 @@
 import { eq, inArray } from "drizzle-orm";
-import { aiContext, apiTokens, auditLog, people, requestMessages, requests } from "@/db/schema";
+import { aiContext, apiTokens, auditLog, pendingPrompts, people, requestMessages, requests } from "@/db/schema";
 import { normalizeUsername, superadminTelegramId, superadminUsername } from "@/lib/admin";
 import { displayName } from "@/lib/names";
 import type { Person } from "@/lib/types";
@@ -52,6 +52,9 @@ async function mergeInto(db: DbClient, placeholderId: number, realId: number) {
   await db.update(auditLog).set({ actorPersonId: realId }).where(eq(auditLog.actorPersonId, placeholderId));
   await db.update(apiTokens).set({ personId: realId }).where(eq(apiTokens.personId, placeholderId));
   await db.update(aiContext).set({ createdById: realId }).where(eq(aiContext.createdById, placeholderId));
+  await db.update(pendingPrompts).set({ requesterId: realId }).where(eq(pendingPrompts.requesterId, placeholderId));
+  await db.update(pendingPrompts).set({ assigneeId: realId }).where(eq(pendingPrompts.assigneeId, placeholderId));
+  await db.update(pendingPrompts).set({ createdById: realId }).where(eq(pendingPrompts.createdById, placeholderId));
   await db.delete(people).where(eq(people.id, placeholderId));
 }
 
