@@ -425,3 +425,10 @@ input[type="time"]::-webkit-date-and-time-value {
   .board-anim { animation: board-flip 0.5s both; transform-origin: top; }
   @keyframes board-flip { from { opacity: 0; transform: rotateX(70deg); } to { opacity: 1; transform: none; } }
 }
+
+/* the phone tab bar (components/Nav.tsx) floats over the page bottom; keep the footer clear of it */
+@media (max-width: 39.99rem) {
+  body:has([data-tabbar]) {
+    padding-bottom: calc(env(safe-area-inset-bottom) + 76px);
+  }
+}
