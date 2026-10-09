@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHAT, SCENARIOS as ALL } from "../scripts/sim-webhook.mjs";
+import { CHAT, PEOPLE, SCENARIOS as ALL } from "../scripts/sim-webhook.mjs";
 
 type Ent = { type: string; offset: number; length: number; user?: { id: number } };
 type Msg = {
@@ -69,5 +69,31 @@ describe("sim-webhook scenarios", () => {
     expect(first.caption).toMatch(/^\/request @ben/);
     expect(first.caption_entities![0]).toMatchObject({ type: "bot_command", offset: 0, length: 8 });
     expect(first.photo).toHaveLength(3);
+  });
+
+  it("round 2 status scenarios reply into the thread", async () => {
+    const deep = await run("done-in-thread");
+    const done = deep.at(-1)!;
+    expect(done.from.id).toBe(PEOPLE.ben.id);
+    expect(done.text).toMatch(/^\/done \S/);
+    expect(done.reply_to_message!.message_id).toBe(deep.at(-2)!.message_id); // the deepest chain message
+    expect(deep.at(-2)!.reply_to_message!.message_id).toBe(deep.at(-3)!.message_id);
+
+    const [, pic] = await run("done-with-photo");
+    expect(pic.caption).toMatch(/^\/done /);
+    expect(pic.photo).toHaveLength(3);
+    expect(pic.reply_to_message!.from.is_bot).toBe(true);
+
+    const [, work, close] = await run("close-on-behalf");
+    expect(work.from.id).toBe(PEOPLE.ben.id);
+    expect(work.photo).toBeTruthy();
+    expect(close.from.id).toBe(PEOPLE.asha.id);
+    expect(close.text).toMatch(/^\/done /);
+    expect(close.reply_to_message!.message_id).toBe(work.message_id);
+
+    const [, bare] = await run("bare-done-assignee");
+    expect(bare).toMatchObject({ text: "done", from: { id: PEOPLE.ben.id } });
+    expect(bare.entities).toBeUndefined();
+    expect(bare.reply_to_message!.from.is_bot).toBe(true);
   });
 });
