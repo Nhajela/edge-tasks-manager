@@ -82,7 +82,8 @@ export const usage = {
   with: "Who with? E.g. <code>/with @bob</code>",
   status: "Which request? E.g. <code>/status 12</code>",
   done: "Reply to a request message, or use <code>/done 12</code>.",
-  log: "Reply to someone's message with /log and I'll quietly track it for you.",
+  // a reply to a message from before the bot joined arrives with no reply info, so this also covers "I did reply"
+  log: "Reply to someone's message with /log and I'll quietly track it for you.\n\nIf you did reply: I can't see messages sent before I was added to that group, so Telegram doesn't tell me which one you meant. /log works on anything sent after I joined.",
 };
 
 /** Silent commands (/log, /new_request…): only the sender hears, by DM. */
