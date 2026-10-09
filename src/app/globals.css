@@ -72,36 +72,6 @@
   --sidebar-ring: var(--teal);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #10141f;
-    --sand: #171c2a;
-    --ink: #f1efe9;
-    --ink-soft: #b8bccb;
-    --ink-mute: #7f8599;
-    --line: rgba(241, 239, 233, 0.16);
-    --line-soft: rgba(241, 239, 233, 0.08);
-
-    --teal: #5fb0b5;
-    --teal-deep: #8fd0d3;
-    --teal-tint: #15262a;
-    --mint: #1d3a3c;
-
-    --blue: #8b9bff;
-    --blue-deep: #aab6ff;
-    --blue-tint: #1a1f3b;
-
-    --marigold: #f0b35a;
-    --marigold-deep: #f6c982;
-    --marigold-tint: #332714;
-
-    --danger: #ef8a78;
-    --danger-tint: #3a1d18;
-
-    --primary: var(--ink);
-    --primary-foreground: var(--paper);
-  }
-}
 :root[data-theme="dark"] {
   --paper: #10141f;
   --sand: #171c2a;
@@ -122,6 +92,9 @@
   --marigold-tint: #332714;
   --danger: #ef8a78;
   --danger-tint: #3a1d18;
+  --primary: var(--ink);
+  --primary-foreground: var(--paper);
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -361,11 +334,9 @@ input[type="time"]::-webkit-date-and-time-value {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
   background-size: 180px 180px;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .grain::after {
-    mix-blend-mode: screen;
-    opacity: 0.05;
-  }
+:root[data-theme="dark"] .grain::after {
+  mix-blend-mode: screen;
+  opacity: 0.05;
 }
 
 @utility glass {

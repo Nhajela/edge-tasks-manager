@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { Column, Mark } from "@/components/bits";
 import { CommandBubble } from "@/components/EmptyState";
 import { LoginButton } from "@/components/LoginButton";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Tutorial } from "@/components/landing/Tutorial";
 import { safeNext } from "@/lib/links";
 import { getSession } from "@/lib/session";
@@ -20,6 +21,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ n
           <div className="flex items-center gap-2">
             <Mark size={30} />
             <span className="text-[16px] font-semibold tracking-tight">Edge Tasks</span>
+            <span className="ml-auto">
+              <ThemeToggle />
+            </span>
           </div>
           <h1 className="display text-[34px] font-bold leading-[1.08] sm:text-[52px]">
             Ask anyone at Edge City for something, right from Telegram.

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Column, Mark } from "@/components/bits";
 import { Nav, TabBar } from "@/components/Nav";
 import { navItems } from "@/components/navItems";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 /**
  * Logged-in frame: a floating glass header pill (nav inline on desktop) and, on phones, a bottom tab bar.
@@ -19,7 +20,10 @@ export function Shell({ isAdmin, inboxCount = 0, children }: { isAdmin?: boolean
               <Mark />
               <span className="truncate text-[15.5px] font-semibold tracking-tight">Edge Tasks</span>
             </Link>
-            <Nav items={items} inboxCount={inboxCount} />
+            <div className="flex items-center gap-1">
+              <Nav items={items} inboxCount={inboxCount} />
+              <ThemeToggle />
+            </div>
           </div>
         </Column>
       </header>
