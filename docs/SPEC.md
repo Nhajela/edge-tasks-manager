@@ -36,9 +36,9 @@ with no OpenRouter key (titler falls back to a heuristic title from the first ~8
   another person's message), chat_id, chat_title, source_message_id, message_link, ai_question (nullable),
   ai_status (`pending|done|failed|skipped`), done_at, created/updated.
 - `request_messages`: each Telegram message attached to a request (the original + appended ones): request_id,
-  chat_id, message_id, from_id → people, text, link, kind (`original|append`), created.
+  chat_id, message_id, from_id → people, text, link, kind (`original|append|thread`), created.
 - `request_events`: timeline — request_id, actor_id → people (nullable for system/AI/MCP), kind
-  (`created|status|comment|append|title|priority|due|assignee`), text, data jsonb, via (`telegram|web|mcp|ai`),
+  (`created|status|comment|append|thread|title|priority|due|assignee`), text, data jsonb, via (`telegram|web|mcp|ai`),
   created. Comments and status updates are events.
 - `attachments`: request_id, message_id, telegram_file_id, telegram_file_unique_id, kind (`photo|document`),
   mime, file_name, width/height, size, r2_key (nullable, future). Served publicly via
@@ -89,6 +89,23 @@ Parsing rules (pure function in `src/lib/bot/parse.ts`, unit tested heavily):
 - Message links: supergroup `-100XXXX` → `https://t.me/c/XXXX/<msgid>`; public group with username →
   `https://t.me/<username>/<msgid>`; DMs/basic groups → null.
 - Loop safety: ignore messages from bots; dedupe by (chat_id, message_id) so Telegram retries don't double-create.
+
+### Reply threads (automatic, any group, no command needed)
+Any message from **anyone** that replies to a message tied to a request automatically becomes part of that
+request's **thread** in the web UI — no `/append` or `/add` needed. "Tied to a request" = the command message, the
+original replied-to message (source), any appended message, the bot's confirmation message, or a message already in
+the thread (so reply chains keep threading). Store these in `request_messages` with kind `thread` (text/caption,
+author, link, photos as attachments) and a `thread` event in `request_events`. They do NOT change the request body
+(that stays `/append`'s job) and do not trigger re-titling. The assignee and requester get a quiet notification only
+via the dashboard (no Telegram ping for every thread reply, to avoid spam); the request page shows the thread as a
+chat-style conversation with "Open in Telegram" per message. Track every bot message id we send in a group
+(`bot_messages` with request_id) so replies to them resolve to the request.
+This must work in **any** group the bot is added to. Telegram only delivers non-command replies to human messages
+when the bot's privacy mode is OFF (BotFather → /setprivacy → Disable) or the bot is a group admin; replies to the
+bot's own messages always arrive. So: README/setup tells the owner to disable privacy mode (do this by default), the
+bot's my_chat_member handler warns the superadmin if it was added to a group where it can't read messages
+(getMe `can_read_all_group_messages` false and not admin), and all other messages that are not tied to a request are
+ignored (never stored).
 
 ## Notifications (`src/lib/notify.ts`)
 On status change / comment / done by the assignee: DM the requester if `started_bot`; otherwise reply in the
