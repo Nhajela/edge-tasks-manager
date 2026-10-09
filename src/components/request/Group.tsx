@@ -10,7 +10,20 @@ const PAGE = 5;
  * A bucket (SPEC "Grouping"): header button = caret + title + count chip, collapsible; then the first 5 rows and
  * "Show N more" (+5). The caller renders nothing for an empty bucket.
  */
-export function Group({ title, count, collapsedByDefault, rows }: { title: string; count: number; collapsedByDefault: boolean; rows: ReactNode[] }) {
+export function Group({
+  title,
+  count,
+  collapsedByDefault,
+  rows,
+  meta,
+}: {
+  title: string;
+  count: number;
+  collapsedByDefault: boolean;
+  rows: ReactNode[];
+  /** extra header text after the count, e.g. "2 overdue" */
+  meta?: ReactNode;
+}) {
   const [open, setOpen] = useState(!collapsedByDefault);
   const [shown, setShown] = useState(PAGE);
   const more = Math.min(PAGE, rows.length - shown);
@@ -25,6 +38,7 @@ export function Group({ title, count, collapsedByDefault, rows }: { title: strin
         <ChevronRight aria-hidden className={cn("size-4 text-ink-mute transition-transform", open && "rotate-90")} />
         <h2 className="text-[15px] font-semibold">{title}</h2>
         <span className="pill bg-sand px-2 text-[12.5px] font-medium leading-5 tabular-nums text-ink-soft">{count}</span>
+        {meta}
       </button>
       {open && (
         <div className="pl-6">

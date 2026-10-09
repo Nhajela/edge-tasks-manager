@@ -11,7 +11,7 @@ import { CLOSED, STATUSES, STATUS_LABEL } from "@/lib/constants";
 import { relativeTime } from "@/lib/format";
 import { displayName } from "@/lib/names";
 import * as requests from "@/services/requests";
-import { Group } from "../with/Group";
+import { Group } from "@/components/request/Group";
 import { byAssignee } from "./byAssignee";
 import { AdminHeader, Chip, Select, hrefWith, intParam, param, requireAdminViewer } from "./_ui";
 
@@ -86,6 +86,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
               key={g.person.id}
               title={displayName(g.person)}
               count={g.items.length}
+              collapsedByDefault={false}
               meta={
                 // the count chip already says how many; only add what it doesn't
                 <span className="text-[13px] font-normal text-ink-soft">
@@ -94,9 +95,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
                   {g.overdue > 0 && <span className="font-medium text-danger">{g.overdue} overdue</span>}
                 </span>
               }
-            >
-              <ul className="divide-y divide-line-soft overflow-hidden rounded-[var(--radius-card)] border border-line-soft bg-card">
-                {g.items.map((r) => (
+              rows={g.items.map((r) => (
                   <li key={r.id} className="relative flex flex-col gap-1.5 px-4 py-3 hover:bg-sand/50">
                     <div className="flex items-start gap-2.5">
                       <PriorityDot priority={r.priority} className="mt-[7px]" />
@@ -123,8 +122,7 @@ export default async function AdminPage({ searchParams }: { searchParams: Promis
                     </div>
                   </li>
                 ))}
-              </ul>
-            </Group>
+            />
           ))}
         </div>
       )}
