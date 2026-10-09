@@ -2,7 +2,7 @@ import { type Bubble, STEPS, withBot } from "./tutorial-content";
 
 function ChatBubble({ b, bot }: { b: Bubble; bot: string }) {
   const you = b.from === "you";
-  const mono = you && /^[/@]/.test(b.text); // commands look typed; plain chat stays plain
+  const mono = b.from !== "bot" && /^[/@]/.test(b.text); // commands look typed; plain chat stays plain
   return (
     <li className={you ? "flex flex-col items-end" : "flex flex-col items-start"}>
       <span
@@ -26,7 +26,7 @@ function ChatBubble({ b, bot }: { b: Bubble; bot: string }) {
   );
 }
 
-/** "How it works in 60 seconds": numbered steps, each with a Telegram-style chat mock. */
+/** "How it works": numbered steps, each with a Telegram-style chat mock. */
 export function Steps({ bot }: { bot: string }) {
   return (
     <ol className="flex flex-col gap-6">

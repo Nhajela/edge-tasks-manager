@@ -1,4 +1,5 @@
 /** Everything the bot says (HTML, Telegram parse_mode). Kept in one place so the copy is easy to review. */
+import { helpLines } from "@/components/landing/tutorial-content";
 import { BOT_USERNAME, STATUS_LABEL } from "@/lib/constants";
 import { dueLabel } from "@/lib/format";
 import { escapeHtml as esc } from "@/lib/html";
@@ -44,21 +45,10 @@ export function list(heading: string, items: Request[], total: number, now: Date
 export const status = (r: Request, requester: Person | null, assignee: Person | null, now: Date) =>
   `${line(r, now)}\n${name(requester)} → ${name(assignee)}`;
 
-export const HELP = [
-  "<b>Ask anyone for something</b>",
-  "/request @bob fix the projector: ask @bob",
-  "/request fix the projector: ask the organisers",
-  "Reply to a message with /request: you take it on",
-  "/append (reply to a message): add it to their latest request",
-  "",
-  "/mine: open requests for you",
-  "/raised: open requests you asked for",
-  "/with @bob: open requests between you and @bob",
-  "/status 12 · /done 12",
-  "",
-  "Reply to any message of a request:",
-  "/done · /doing · /waiting &lt;why&gt; · /decline &lt;why&gt; · /reopen",
-].join("\n");
+/** Rendered from the landing tutorial's data, so /help, the landing page and the README never drift. */
+export const HELP = helpLines(BOT_USERNAME || "bot")
+  .map((l, i) => (i ? esc(l) : `<b>${esc(l)}</b>`))
+  .join("\n");
 
 export const HELP_MENTION = `Mention me with an @person and what you need, e.g. <code>@${esc(BOT_USERNAME || "bot")} @bob fix the projector</code>. Send /help for more.`;
 
