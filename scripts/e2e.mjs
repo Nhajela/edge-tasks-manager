@@ -44,13 +44,34 @@ async function step(name, fn) {
     console.log(`ok   ${name} (${Date.now() - s}ms)`);
     return r;
   } catch (e) {
-    console.log(`FAIL ${name} (${Date.now() - s}ms)\n     ${e.message.split("\n").join("\n     ")}`);
+    const why = e.cause ? `${e.message} (${e.cause.code ?? e.cause.message ?? e.cause})` : e.message; // fetch hides the reason in cause
+    console.log(`FAIL ${name} (${Date.now() - s}ms)\n     ${why.split("\n").join("\n     ")}`);
     throw e;
   }
 }
 const assert = (cond, msg) => {
   if (!cond) throw new Error(msg);
 };
+// Grouping checks read main's innerText, so they don't depend on markup: a header line is the bucket/tile title,
+// optionally with its count ("Act 3", "Act · 3", or "3 Overdue" for a tile).
+const headerRe = (t) => new RegExp(`^(\\d+\\s+)?${t}(\\s*·?\\s*\\d+)?$`, "i");
+const hasHeader = (text, t) => text.split("\n").some((l) => headerRe(t).test(l.trim()));
+/** Char offsets of the `titles` header lines, which must appear in this order; `end` = the line after the last. */
+function linesInOrder(text, titles) {
+  const lines = text.split("\n");
+  const at = {};
+  let i = 0;
+  for (const t of titles) {
+    while (i < lines.length && !headerRe(t).test(lines[i].trim())) i++;
+    if (i === lines.length) throw new Error(`no "${t}" header after the ones before it (${titles.join(", ")})`);
+    at[t] = lines.slice(0, i).join("\n").length; // comparable with indexOf
+    i++;
+  }
+  at.end = i;
+  return at;
+}
+/** A grouping header: a button whose name starts with the bucket title. */
+const groupHeader = (page, title) => page.getByRole("button", { name: new RegExp(`^\\W*${title}\\b`, "i") }).first();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const node = (args, env = ENV) => execFileSync(process.execPath, args, { env, encoding: "utf8" });
 
@@ -80,7 +101,10 @@ try {
   const outboxStart = await stat(OUTBOX).then((s) => s.size, () => 0);
   const outbox = async () => (await readFile(OUTBOX).catch(() => Buffer.alloc(0))).subarray(outboxStart).toString("utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
 
-  for (const name of ["request-at", "reply-request", "mention", "mention-pending", "append", "photo", "thread-chain"])
+  const SCENARIOS = ["request-at", "reply-request", "mention", "mention-pending", "append", "photo", "thread-chain"];
+  // round 2: status from anywhere in the thread, deliverables, closing on someone's behalf
+  SCENARIOS.push("done-in-thread", "done-with-photo", "close-on-behalf", "bare-done-assignee");
+  for (const name of SCENARIOS)
     await step(`bot: ${name}`, () => {
       const out = node(["scripts/sim-webhook.mjs", BASE, name]);
       const bad = out.split("\n").filter((l) => /^ {3}\d{3} /.test(l) && !l.startsWith("   200 "));
@@ -90,7 +114,9 @@ try {
   // the superadmin says something to the bot once so they have a people row to log in with
   await step("bot: admin DM /help", async () => {
     const message = { message_id: 1, date: Math.floor(Date.now() / 1000), chat: { id: ADMIN.id, type: "private" }, from: ADMIN, text: "/help", entities: [{ type: "bot_command", offset: 0, length: 5 }] };
-    const r = await fetch(`${BASE}/api/telegram`, { method: "POST", headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": ENV.TELEGRAM_WEBHOOK_SECRET }, body: JSON.stringify({ update_id: 1, message }) });
+    const post = () => fetch(`${BASE}/api/telegram`, { method: "POST", headers: { "content-type": "application/json", "x-telegram-bot-api-secret-token": ENV.TELEGRAM_WEBHOOK_SECRET }, body: JSON.stringify({ update_id: 1, message }) });
+    // the keep-alive socket from the readiness poll may have been closed by the server while the scenarios ran
+    const r = await post().catch((e) => (e.cause?.code === "ECONNRESET" ? post() : Promise.reject(e)));
     assert(r.status === 200, `webhook ${r.status}`);
   });
 
@@ -106,15 +132,73 @@ try {
     return rows;
   });
   const tap = created.find((r) => r.body.includes("leaking tap"));
-  // SPEC conflict, kept as built: a plain reply to the bot's confirmation is an append (SPEC "Append"), so the chain
-  // is append (Asha -> bot) + 3 thread replies; all 4 are on the request in order with their reply_to.
-  const thread = await step("db: thread-chain = append + 3 thread replies", async () => {
+  // round 2 rule: a plain reply to the bot's confirmation is a thread message (only an explicit /append changes the
+  // body), so the chain is 4 thread replies, in order, each with its reply_to.
+  const thread = await step("db: thread-chain = 4 thread replies (reply-to-confirmation lands in the thread)", async () => {
     assert(tap.assignee === "ben", `tap assignee ${tap.assignee}`);
     const rows = await q("SELECT kind, text, reply_to_message_id IS NOT NULL AS quoted FROM request_messages WHERE request_id = $1 AND kind <> 'original' ORDER BY id", [tap.id]);
     const kinds = rows.map((r) => r.kind).join(",");
-    assert(kinds === "append,thread,thread,thread" && rows.every((r) => r.quoted), `chain on #${tap.id}: ${kinds}`);
+    assert(kinds === "thread,thread,thread,thread" && rows.every((r) => r.quoted), `chain on #${tap.id}: ${kinds}`);
     return rows;
   });
+
+  const byBody = async (text) => {
+    const [r] = await q("SELECT * FROM requests WHERE body ILIKE $1 ORDER BY id DESC LIMIT 1", [`%${text}%`]);
+    assert(r, `no request for: ${text}`);
+    return r;
+  };
+  const kindsOf = async (id) => (await q("SELECT kind FROM request_messages WHERE request_id = $1 ORDER BY id", [id])).map((r) => r.kind).join(",");
+  const audits = (id, action) => q("SELECT data FROM audit_log WHERE entity_type = 'request' AND entity_id = $1 AND action = $2 ORDER BY id", [String(id), action]);
+
+  const table = await step("db: done-in-thread closes from the deepest reply (status message, result note)", async () => {
+    const r = await byBody("wobbly table");
+    assert(r.status === "done", `#${r.id} status ${r.status}`);
+    assert(r.result_note === "shimmed both legs, rock solid now", `result_note ${r.result_note}`);
+    const kinds = await kindsOf(r.id);
+    assert(kinds === "original,thread,thread,thread,status", `messages on #${r.id}: ${kinds}`);
+    const st = await audits(r.id, "request.status");
+    assert(st.length === 1 && !st[0].data.onBehalfOf, `status audit rows: ${JSON.stringify(st)}`);
+    return r;
+  });
+  await step("db: done-with-photo makes the photo message the deliverable", async () => {
+    const r = await byBody("sign for the quiet room");
+    assert(r.status === "done" && r.result_note === "sign is up by the door", `#${r.id} ${r.status} ${r.result_note}`);
+    const [m] = await q("SELECT kind, chat_id, message_id FROM request_messages WHERE id = $1", [r.result_message_id]);
+    assert(m?.kind === "status", `result message ${JSON.stringify(m)}`);
+    const [{ n }] = await q("SELECT count(*)::int AS n FROM attachments WHERE request_id = $1 AND message_id = $2", [r.id, m.message_id]);
+    assert(n === 1, `deliverable photos ${n}`);
+  });
+  const behalf = await step("db: close-on-behalf records the requester closing for @ben, deliverable = Ben's photo", async () => {
+    const r = await byBody("week-2 schedule");
+    const [ben, asha] = await Promise.all(["ben", "asha"].map(async (u) => (await q("SELECT id FROM people WHERE username = $1", [u]))[0].id));
+    assert(r.status === "done" && r.result_by_id === asha, `#${r.id} ${r.status} result_by ${r.result_by_id}`);
+    assert(r.result_note === "all 30 picked up, thanks Ben", `result_note ${r.result_note}`);
+    const [m] = await q("SELECT kind, from_id FROM request_messages WHERE id = $1", [r.result_message_id]);
+    assert(m?.kind === "thread" && m.from_id === ben, `result message ${JSON.stringify(m)}`);
+    const st = await audits(r.id, "request.status");
+    assert(st.length === 1 && st[0].data.onBehalfOf === ben, `status audit: ${JSON.stringify(st)}`);
+    return r;
+  });
+  await step("outbox: assignee @ben told about the on-behalf close (not the requester)", async () => {
+    const ben = (await q("SELECT telegram_id FROM people WHERE username = 'ben'"))[0].telegram_id;
+    const mine = (e) => (e.text ?? e.caption ?? "").includes(`#${behalf.id}`) && /done/i.test(e.text ?? e.caption ?? "");
+    await until("on-behalf notification", async () =>
+      (await outbox()).some((e) => mine(e) && (String(e.chatId) === String(ben) || /^@ben\b/.test(e.text ?? e.caption ?? ""))), 5000);
+    const toAsha = (await outbox()).filter((e) => mine(e) && /^@asha\b/.test(e.text ?? e.caption ?? ""));
+    assert(!toAsha.length, `the requester (the actor) was notified: ${JSON.stringify(toAsha)}`);
+  });
+  await step("bare-done-assignee: stays open, lands in the thread, bot offers 'Mark done?'", async () => {
+    const r = await byBody("water dispenser");
+    assert(r.status === "open", `#${r.id} status ${r.status}`);
+    const kinds = await kindsOf(r.id);
+    assert(kinds === "original,thread", `messages on #${r.id}: ${kinds}`);
+    await until("Mark done? prompt", async () =>
+      (await outbox()).some((e) => (e.text ?? "").includes(`#${r.id}`) && /done\?/i.test(e.text ?? "") && JSON.stringify(e.buttons ?? e.reply_markup ?? "").includes(`${r.id}`)), 5000);
+  });
+
+  // every inbox/raised bucket for ben and asha (the seeded people share the sim's fake telegram ids)
+  await step("seed: round 2 bucket data", () => node(["scripts/seed-dev.mjs"]));
+  const delivered = await byBody("best photos from opening night");
 
   browser = await chromium.launch({ channel: "chrome" });
   const loginAs = async (who, width = 390) => {
@@ -135,11 +219,12 @@ try {
   await step("web: detail shows the thread chain with reply quotes", async () => {
     await ben.page.locator(`a[href="/r/${tap.id}"]`).first().click();
     await ben.page.waitForURL(`**/r/${tap.id}`);
-    await ben.page.getByText("Thread · 3").waitFor();
+    await ben.page.getByText("Thread · 4").waitFor();
     const text = await ben.page.locator("main").innerText();
     for (const t of thread) assert(text.includes(t.text), `message missing: ${t.text}`);
+    // the first reply quotes the bot confirmation (may or may not render a quote); the last 3 quote people
     const quotes = await ben.page.getByText(/^replying to /).allInnerTexts();
-    assert(quotes.length === 3 && quotes[0].startsWith("replying to @asha: it's the one on the left") && quotes[2].startsWith("replying to @ben"), `reply quotes: ${quotes.join(" | ")}`);
+    assert(quotes.length >= 3 && quotes.at(-3).startsWith("replying to @asha: it's the one on the left") && quotes.at(-1).startsWith("replying to @ben"), `reply quotes: ${quotes.join(" | ")}`);
   });
   const statusIs = (s) => until(`status ${s}`, async () => (await q("SELECT status FROM requests WHERE id = $1", [tap.id]))[0].status === s);
   await step("web: set Doing", async () => {
@@ -153,23 +238,89 @@ try {
   });
   await step("web: mark done", async () => {
     await ben.page.getByRole("radio", { name: "Done" }).click();
+    // round 2: Done may open a "What was delivered? (optional)" sheet first
+    const sheet = ben.page.getByRole("dialog");
+    if (await sheet.waitFor({ timeout: 2000 }).then(() => true, () => false)) {
+      await sheet.getByRole("textbox").first().fill("New washer, no more drips");
+      await sheet.getByRole("button", { name: /done|save|confirm/i }).last().click();
+    }
     await statusIs("done");
   });
   await step("audit: one row per step", async () => {
     const rows = await q("SELECT action FROM audit_log WHERE entity_type = 'request' AND entity_id = $1 ORDER BY id", [String(tap.id)]);
     const actions = rows.map((r) => r.action);
     for (const a of ["request.create", "request.thread", "request.status", "request.comment"]) assert(actions.includes(a), `no ${a} in ${actions.join(", ")}`);
-    assert(actions.filter((a) => a === "request.thread").length === 3, `thread audit rows: ${actions.join(", ")}`);
+    assert(actions.filter((a) => a === "request.thread").length === 4, `thread audit rows: ${actions.join(", ")}`);
     assert(actions.filter((a) => a === "request.status").length === 2, `status audit rows: ${actions.join(", ")}`);
   });
   await step("outbox: requester told it's done", async () => {
     await until("done notification", async () => (await outbox()).some((e) => e.text?.includes(`#${tap.id}`) && /done/i.test(e.text) && /asha/i.test(e.text)), 5000);
   });
 
-  await step("web: requester (@asha) /raised shows it done", async () => {
+  const asha = await step("web: requester (@asha) /raised shows it under Recently done", async () => {
     const s = await loginAs("asha");
-    await s.page.goto(`${BASE}/raised?status=done`);
-    await s.page.locator(`a[href="/r/${tap.id}"]`).first().waitFor();
+    await s.page.goto(`${BASE}/raised`);
+    const link = s.page.locator(`a[href="/r/${tap.id}"]`).first();
+    if (!(await link.isVisible())) await groupHeader(s.page, "Recently done").click(); // collapsed by default
+    await link.waitFor();
+    return s;
+  });
+
+  await step("web: /inbox (@ben) groups into New, Act, Upcoming, Waiting, Done in that order", async () => {
+    await ben.page.goto(`${BASE}/inbox`);
+    await groupHeader(ben.page, "Act").waitFor();
+    const text = await ben.page.locator("main").innerText();
+    const at = linesInOrder(text, ["New", "Act", "Upcoming", "Waiting", "Done"]);
+    const where = (t) => text.toLowerCase().indexOf(t);
+    assert(where("projector screen") > at.Act && where("projector screen") < at.Upcoming, "overdue item not in Act");
+    assert(where("collect the drone") > at.Act && where("collect the drone") < at.Upcoming, "due-tomorrow item not in Act");
+    assert(where("stage for closing night") > at.Upcoming && where("stage for closing night") < at.Waiting, "later item not in Upcoming");
+    assert(where("waiting on the supplier quote") > at.Waiting, "custom waiting label not shown in Waiting");
+    assert(where("generator before the beach party") > at.New && where("generator before the beach party") < at.Act, "unseen item not in New");
+  });
+
+  await step("web: /raised (@asha) tiles Overdue, Open, In progress, Waiting, Done this week, then sections", async () => {
+    await asha.page.goto(`${BASE}/raised`);
+    await asha.page.getByText("Done this week").first().waitFor();
+    const text = await asha.page.locator("main").innerText();
+    const tiles = linesInOrder(text, ["Overdue", "Open", "In progress", "Waiting", "Done this week"]);
+    const after = text.split("\n").slice(tiles.end).join("\n");
+    linesInOrder(after, ["Overdue", "Active", "Waiting", "Recently done"]);
+    assert(after.toLowerCase().includes("vegan options"), "overdue seeded request missing");
+    // tapping a tile filters the list: Overdue keeps the overdue item and drops the Active section
+    const main = asha.page.locator("main");
+    await main.getByRole("button", { name: /overdue/i }).or(main.getByRole("link", { name: /overdue/i })).first().click();
+    await until("Overdue tile filter", async () => {
+      const t = await main.innerText();
+      return t.toLowerCase().includes("vegan options") && !hasHeader(t, "Active");
+    }, 5000);
+  });
+
+  await step("web: on-behalf close shows the Delivered card at the very top + system line", async () => {
+    await asha.page.goto(`${BASE}/r/${behalf.id}`);
+    await asha.page.getByText(/Delivered/).first().waitFor();
+    const text = await asha.page.locator("main").innerText();
+    const card = text.indexOf("Delivered");
+    assert(card >= 0 && card < text.indexOf("print 30 copies"), "Delivered card is not above the original message");
+    assert(text.indexOf("all 30 picked up, thanks Ben") > card, "result note missing from the card");
+    assert(/on behalf of @ben/i.test(text), "no 'on behalf of @ben' system line");
+    assert((await asha.page.locator("main img").count()) >= 1, "deliverable image missing");
+  });
+
+  await step("web: seeded delivered request shows its card first", async () => {
+    await asha.page.goto(`${BASE}/r/${delivered.id}`);
+    await asha.page.getByText(/Delivered/).first().waitFor();
+    const text = await asha.page.locator("main").innerText();
+    assert(text.indexOf("Delivered") < text.indexOf("Send me the best photos"), "Delivered card is not above the original message");
+    assert(text.includes("3 photos picked for the newsletter"), "seeded result note missing");
+  });
+
+  await step("web: in-thread /done renders as a status system line, not a thread bubble", async () => {
+    await ben.page.goto(`${BASE}/r/${table.id}`);
+    await ben.page.getByText(/marked this done/i).first().waitFor();
+    const text = await ben.page.locator("main").innerText();
+    assert(/@?ben marked this done/i.test(text) && text.includes("shimmed both legs"), "system line lacks who/note");
+    await ben.page.getByText("Thread · 3").waitFor(); // the status message is not counted
   });
 
   await step("web: /admin/activity shows each step", async () => {
@@ -216,7 +367,8 @@ try {
       const shots = [
         ["landing", null, "/"],
         ["inbox", "ben", "/inbox"],
-        ["raised", "asha", "/raised?status=all"],
+        ["raised", "asha", "/raised"],
+        ["detail-delivered", "asha", `/r/${behalf.id}`],
         ["detail-with-thread", "ben", `/r/${tap.id}`],
         ["settings", "ben", "/settings"],
         ["context", String(ADMIN.id), "/context"],

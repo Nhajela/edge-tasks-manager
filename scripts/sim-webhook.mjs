@@ -141,6 +141,42 @@ export const SCENARIOS = {
     }
     await sim.send(msg(PEOPLE.ben, `/done ${id}`));
   },
+  /** Round 2: a chain 3 deep under the confirmation, then Ben replies `/done <note>` to the deepest message (no id). */
+  "done-in-thread": async (sim) => {
+    const cmd = msg(PEOPLE.asha, "/request @ben fix the wobbly table in the cafe");
+    await sim.send(cmd);
+    const conf = await sim.reply(cmd);
+    const a1 = msg(PEOPLE.asha, "the one by the window", { replyTo: botMsg(conf) });
+    await sim.send(a1);
+    const b1 = msg(PEOPLE.ben, "needs a shim, I'll cut one", { replyTo: a1 });
+    await sim.send(b1);
+    const a2 = msg(PEOPLE.asha, "great, thanks!", { replyTo: b1 });
+    await sim.send(a2);
+    await sim.send(msg(PEOPLE.ben, "/done shimmed both legs, rock solid now", { replyTo: a2 }));
+  },
+  /** Round 2: Ben's photo with caption `/done <note>` replying to the confirmation: the photo is the deliverable. */
+  "done-with-photo": async (sim) => {
+    const cmd = msg(PEOPLE.asha, "/request @ben put up a sign for the quiet room");
+    await sim.send(cmd);
+    const conf = await sim.reply(cmd);
+    await sim.send(msg(PEOPLE.ben, "/done sign is up by the door", { photo: true, replyTo: botMsg(conf) }));
+  },
+  /** Round 2: Ben posts the work (photo) in the thread, the requester Asha closes it on his behalf replying to it. */
+  "close-on-behalf": async (sim) => {
+    const cmd = msg(PEOPLE.asha, "/request @ben print 30 copies of the week-2 schedule");
+    await sim.send(cmd);
+    const conf = await sim.reply(cmd);
+    const work = msg(PEOPLE.ben, "printed, pinned one on the noticeboard", { photo: true, replyTo: botMsg(conf) });
+    await sim.send(work);
+    await sim.send(msg(PEOPLE.asha, "/done all 30 picked up, thanks Ben", { replyTo: work }));
+  },
+  /** Round 2: the assignee writes a bare "done" reply: the bot asks "Mark #N done?" (button) instead of closing it. */
+  "bare-done-assignee": async (sim) => {
+    const cmd = msg(PEOPLE.asha, "/request @ben refill the water dispenser in the dome");
+    await sim.send(cmd);
+    const conf = await sim.reply(cmd);
+    await sim.send(msg(PEOPLE.ben, "done", { replyTo: botMsg(conf) }));
+  },
 };
 
 const OUTBOX = join(tmpdir(), "edge-tasks-outbox.jsonl");
