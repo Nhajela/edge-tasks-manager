@@ -3,6 +3,7 @@ import { Note } from "@/components/bits";
 import { StatusChips, parseListStatus } from "@/components/request/ListFilters";
 import { db } from "@/db";
 import { displayName } from "@/lib/names";
+import { splitWith } from "@/lib/sections";
 import { requireViewer } from "@/lib/viewer";
 import * as people from "@/services/people";
 import * as requests from "@/services/requests";
@@ -23,6 +24,7 @@ export default async function WithPage({
   const status = parseListStatus((await searchParams).status);
   const list = await requests.listBetween(db(), v.actor, other.id, { status });
   const name = displayName(other);
+  const blocks = splitWith(list.items, v.person.id);
   return (
     <section className="flex flex-col gap-4">
       <div>
@@ -31,7 +33,20 @@ export default async function WithPage({
       </div>
       <StatusChips base={`/with/${other.username}`} current={status} counts={list.counts} />
       {list.items.length ? (
-        <RowList items={list.items} meId={v.person.id} filter={status} />
+        // SPEC "Grouping": never interleave directions
+        [
+          { label: `${name} asked you`, rows: blocks.toMe },
+          { label: `You asked ${name}`, rows: blocks.byMe },
+        ]
+          .filter((b) => b.rows.length)
+          .map((b) => (
+            <section key={b.label} aria-label={b.label}>
+              <h2 className="mb-2 text-[15px] font-semibold">
+                {b.label} <span className="font-normal text-ink-mute">{b.rows.length}</span>
+              </h2>
+              <RowList items={b.rows} meId={v.person.id} filter={status} />
+            </section>
+          ))
       ) : (
         <Note>{status === "open" ? `Nothing open between you and ${name}.` : `Nothing here between you and ${name}.`}</Note>
       )}

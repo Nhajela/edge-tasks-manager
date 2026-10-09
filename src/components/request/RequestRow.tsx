@@ -14,12 +14,25 @@ import { StatusPill } from "./StatusPill";
  * One request in a list. The whole row opens /r/<id> (stretched title link); the person chip and the optional
  * `check` slot sit above it so they stay clickable. Shows the *other* person: "from" when it's assigned to me.
  */
-export function RequestRow({ item, meId, check, now }: { item: ListItem; meId: number; check?: ReactNode; now?: Date }) {
+export function RequestRow({
+  item,
+  meId,
+  check,
+  now,
+  recent,
+}: {
+  item: ListItem;
+  meId: number;
+  check?: ReactNode;
+  now?: Date;
+  /** activity in the last 24h: tint the row and say "updated 2h ago" */
+  recent?: boolean;
+}) {
   const toMe = item.assigneeId === meId;
   const other = toMe ? item.requester : item.assignee;
   const closed = CLOSED.includes(item.status);
   return (
-    <li className="relative flex gap-3 px-4 py-3.5 transition-colors hover:bg-sand/60">
+    <li className={cn("relative flex gap-3 px-4 py-3.5 transition-colors hover:bg-sand/60", recent && "bg-sand/40")}>
       {check && <div className="relative z-10 pt-0.5">{check}</div>}
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
@@ -44,6 +57,7 @@ export function RequestRow({ item, meId, check, now }: { item: ListItem; meId: n
           <span className="whitespace-nowrap text-ink-mute">
             #{item.id} · {relativeTime(item.createdAt, now)}
           </span>
+          {recent && <span className="whitespace-nowrap font-medium text-ink">updated {relativeTime(item.updatedAt, now)}</span>}
           {item.attachmentCount > 0 && (
             <span className="inline-flex items-center gap-0.5 text-ink-mute" title={`${item.attachmentCount} attachment(s)`}>
               <Paperclip className="size-3.5" aria-hidden />

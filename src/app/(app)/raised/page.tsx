@@ -23,7 +23,7 @@ export default async function RaisedPage({ searchParams }: { searchParams: Promi
       <h1 className="sr-only">I asked</h1>
       <ListTabs current="raised" inboxOpen={inbox.counts.open} raisedOpen={list.counts.open} />
       <StatusChips base="/raised" current={status} counts={list.counts} />
-      {list.items.length ? <RowList items={list.items} meId={v.person.id} filter={status} /> : <Note>{EMPTY[status]}</Note>}
+      {list.items.length ? <RowList items={list.items} meId={v.person.id} filter={status} mode="raised" /> : <Note>{EMPTY[status]}</Note>}
     </section>
   );
 }

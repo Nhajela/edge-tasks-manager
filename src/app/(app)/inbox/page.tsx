@@ -23,7 +23,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       <h1 className="sr-only">To me</h1>
       <ListTabs current="inbox" inboxOpen={list.counts.open} raisedOpen={raised.counts.open} />
       <StatusChips base="/inbox" current={status} counts={list.counts} />
-      {list.items.length ? <RowList items={list.items} meId={v.person.id} filter={status} /> : <Note>{EMPTY[status]}</Note>}
+      {list.items.length ? <RowList items={list.items} meId={v.person.id} filter={status} mode="inbox" /> : <Note>{EMPTY[status]}</Note>}
     </section>
   );
 }
