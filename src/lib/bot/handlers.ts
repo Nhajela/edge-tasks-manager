@@ -8,6 +8,7 @@ import type { Person, Session } from "@/lib/types";
 import { PermissionError, ServiceError, errorMessage } from "@/services/errors";
 import { requestUrl, type Notifier } from "@/services/notifications";
 import * as people from "@/services/people";
+import { groupInbox, groupRaised, type InboxBucket } from "@/services/grouping";
 import * as prompts from "@/services/prompts";
 import * as requests from "@/services/requests";
 import { confirmationMessage } from "@/services/titler";
@@ -26,6 +27,7 @@ export type HandlerDeps = {
 type Ctx = { db: DbClient; deps: HandlerDeps };
 
 const LIST_LIMIT = 10;
+const MINE_ORDER: InboxBucket[] = ["act", "new", "upcoming", "waiting"];
 const result = (outcome: string, requestId?: number | null, effects: Effect[] = []): HandlerResult => ({ outcome, requestId, effects });
 const textOf = (m: TgMessage) => m.text ?? m.caption ?? "";
 const tgPerson = (u: TgUser) => ({ telegramId: u.id, username: u.username ?? undefined, firstName: u.first_name });
@@ -277,20 +279,31 @@ async function onPrompt(c: Ctx, i: Extract<Intent, { kind: "prompt" }>) {
 async function onList(c: Ctx, i: Extract<Intent, { kind: "list" }>) {
   const { actor } = await sender(c, i);
   const now = c.deps.now();
-  const filter = { status: "open" as const, limit: LIST_LIMIT };
-  const board = (heading: string, r: requests.ListResult, empty: string, path: string) =>
-    reply(c, i, copy.list(heading, r.items, r.counts.open, now, empty), { buttons: [{ text: "Open dashboard", url: `${SITE_URL}${path}` }] });
+  // every open item, so the buckets are right; the reply itself is capped at LIST_LIMIT lines
+  const filter = { status: "open" as const, limit: 500 };
+  const board = (blocks: copy.Block[], empty: string, path: string) =>
+    reply(c, i, copy.grouped(blocks, now, empty, LIST_LIMIT), { buttons: [{ text: "Open dashboard", url: `${SITE_URL}${path}` }] });
+  // /mine leads with what to do now: Act, then New, then Upcoming (then Waiting); /raised keeps its order (Overdue first)
+  const toMe = (items: requests.ListItem[]) => {
+    const gs = groupInbox(items, now).groups;
+    return MINE_ORDER.flatMap((k) => gs.filter((g) => g.key === k));
+  };
+  const byMe = (items: requests.ListItem[]) => groupRaised(items, now).groups;
 
   switch (i.command) {
     case "help":
       await reply(c, i, copy.HELP);
       return result("help");
-    case "mine":
-      await board("For you", await requests.listInbox(c.db, actor, filter), copy.empty.mine, "/inbox");
+    case "mine": {
+      const r = await requests.listInbox(c.db, actor, filter);
+      await board([{ heading: "For you", total: r.counts.open, sections: toMe(r.items) }], copy.empty.mine, "/inbox");
       return result("list.mine");
-    case "raised":
-      await board("You asked", await requests.listRaised(c.db, actor, filter), copy.empty.raised, "/raised");
+    }
+    case "raised": {
+      const r = await requests.listRaised(c.db, actor, filter);
+      await board([{ heading: "You asked", total: r.counts.open, sections: byMe(r.items) }], copy.empty.raised, "/raised");
       return result("list.raised");
+    }
     case "with": {
       if (!i.who) {
         await reply(c, i, copy.usage.with);
@@ -298,7 +311,17 @@ async function onList(c: Ctx, i: Extract<Intent, { kind: "list" }>) {
       }
       const other = await resolve(c, i.who);
       const path = other.username ? `/with/${other.username}` : "/inbox";
-      await board(`You and ${other.username ? `@${other.username}` : (other.firstName ?? "them")}`, await requests.listBetween(c.db, actor, other.id, filter), copy.empty.with, path);
+      const who = other.username ? `@${other.username}` : (other.firstName ?? "them");
+      const { items } = await requests.listBetween(c.db, actor, other.id, filter);
+      const [asked, gave] = [items.filter((r) => r.assigneeId === actor.personId), items.filter((r) => r.assigneeId !== actor.personId)];
+      await board(
+        [
+          { heading: `${who} asked you`, total: asked.length, sections: toMe(asked) },
+          { heading: `You asked ${who}`, total: gave.length, sections: byMe(gave) },
+        ],
+        copy.empty.with,
+        path,
+      );
       return result("list.with");
     }
     case "status": {

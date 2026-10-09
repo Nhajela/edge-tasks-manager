@@ -13,6 +13,7 @@ import type { Person } from "@/lib/types";
 
 // after() needs a Next request scope; run its callback inline so the route test sees effects scheduled
 vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: (fn: () => unknown) => void fn() }));
+vi.mock("@/services/grouping", async (orig) => (await import("@tests/helpers/grouping")).withGroupingFallback(orig));
 vi.mock("@/lib/effects", () => ({ runEffects: vi.fn(async () => {}) }));
 
 const db = testDb();
@@ -64,6 +65,9 @@ describe("mcp server", () => {
     expect(data).toMatchObject({ id: me.id, username: me.username, isAdmin: false, open: { inbox: 1, raised: 0 } });
   });
 
+  type G = { key: string; title: string; count: number; items: { id: number }[] };
+  const ids = (data: { groups: G[] }) => data.groups.flatMap((g) => g.items.map((i) => i.id));
+
   it("list_requests: inbox by default, raised, status and person filters, admin-only all", async () => {
     const me = await makePerson(db);
     const bob = await makePerson(db);
@@ -71,23 +75,86 @@ describe("mcp server", () => {
     const a = await makeRequest(db, { assignee: me, requester: bob, body: "bring chairs to the deck" });
     const b = await makeRequest(db, { assignee: me, requester: carol });
     await makeRequest(db, { requester: me, assignee: bob });
-    await requests.setStatus(db, actorFor(me), b.request.id, { status: "done" });
+    await requests.setStatus(db, actorFor(me), b.request.id, { status: "done", note: "chairs are on the deck" });
 
     let res = await call(me, "list_requests");
-    expect(res.data.items.map((i: { id: number }) => i.id)).toEqual([a.request.id]);
-    expect(res.data.items[0]).toMatchObject({ requester: `@${bob.username}`, status: "open", url: expect.stringContaining(`/r/${a.request.id}`) });
+    expect(res.data.box).toBe("inbox");
+    expect(res.data.groups).toEqual([expect.objectContaining({ key: "new", title: "New", count: 1 })]);
+    expect(res.data.groups[0].items[0]).toMatchObject({ id: a.request.id, requester: `@${bob.username}`, status: "open", url: expect.stringContaining(`/r/${a.request.id}`) });
     expect(res.data.counts).toEqual({ open: 1, done: 1, all: 2 });
 
     res = await call(me, "list_requests", { status: "done" });
-    expect(res.data.items.map((i: { id: number }) => i.id)).toEqual([b.request.id]);
+    expect(res.data.groups.map((g: G) => g.key)).toEqual(["done"]);
+    expect(res.data.groups[0].items[0]).toMatchObject({ id: b.request.id, resultNote: "chairs are on the deck" });
     res = await call(me, "list_requests", { status: "all", person: `@${carol.username}` });
-    expect(res.data.items.map((i: { id: number }) => i.id)).toEqual([b.request.id]);
+    expect(ids(res.data)).toEqual([b.request.id]);
     res = await call(me, "list_requests", { box: "raised" });
-    expect(res.data.items).toHaveLength(1);
+    expect(res.data.groups.map((g: G) => [g.key, g.count])).toEqual([["active", 1]]);
 
     res = await call(me, "list_requests", { box: "all" });
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/PERMISSION_DENIED/);
+  });
+
+  it("list_requests: grouped in the fixed bucket order, limit caps each group; admins' all box is per assignee", async () => {
+    const me = await makePerson(db);
+    const now = Date.now();
+    const seen = await makeRequest(db, { assignee: me });
+    await requests.markSeen(db, actorFor(me), seen.request.id);
+    const fresh = [await makeRequest(db, { assignee: me }), await makeRequest(db, { assignee: me })];
+    const later = await makeRequest(db, { assignee: me });
+    await requests.markSeen(db, actorFor(me), later.request.id);
+    await requests.setDue(db, actorFor(me), later.request.id, new Date(now + 6 * 86400_000));
+
+    let res = await call(me, "list_requests", { limit: 1 });
+    expect(res.data.groups.map((g: G) => [g.key, g.count, g.items.length])).toEqual([
+      ["new", 2, 1],
+      ["act", 1, 1],
+      ["upcoming", 1, 1],
+    ]);
+    expect(res.data.groups[0].items[0].id).toBe(fresh[0].request.id); // oldest first
+
+    const late = await makeRequest(db, { requester: me });
+    await requests.setDue(db, actorFor(me), late.request.id, new Date(now - 86400_000));
+    res = await call(me, "list_requests", { box: "raised" });
+    expect(res.data.groups[0]).toMatchObject({ key: "overdue", title: "Overdue", count: 1 });
+
+    const admin = await makePerson(db);
+    const scheduled: Effect[] = [];
+    const server = createMcpServer({ ...actorFromToken(admin), isAdmin: true }, { db, schedule: (e) => void scheduled.push(...e) });
+    const json = await rpc(server, "tools/call", { name: "list_requests", arguments: { box: "all", person: `@${me.username}` } });
+    const groups: (G & { person: { username: string } })[] = json.result.structuredContent.groups;
+    const mine = groups.find((g) => g.key === `person:${me.id}`)!;
+    expect(mine).toMatchObject({ title: `@${me.username}`, count: 4, person: { username: me.username } });
+    expect(groups.find((g) => g.key === `person:${late.assignee.id}`)!.items.map((i) => i.id)).toEqual([late.request.id]);
+  });
+
+  it("get_request puts the delivered result first: note, who, when, the message and its files", async () => {
+    const { request, assignee, requester } = await makeRequest(db);
+    await requests.setStatus(db, actorFor(requester), request.id, {
+      status: "done",
+      note: "projector fixed",
+      message: {
+        chatId: request.chatId!,
+        messageId: 902,
+        fromId: requester.id,
+        text: "/done projector fixed",
+        attachments: [{ messageId: 902, telegramFileId: "FILE_R", telegramFileUniqueId: `UR${request.id}`, kind: "photo" }],
+      },
+    });
+    const { data } = await call(assignee, "get_request", { id: request.id });
+    expect(Object.keys(data)[0]).toBe("result");
+    expect(data.result).toMatchObject({
+      note: "projector fixed",
+      by: `@${requester.username}`,
+      at: expect.any(String),
+      message: { kind: "status", text: "/done projector fixed" },
+      attachments: [{ kind: "photo", url: expect.stringMatching(/\/api\/files\/\d+\?sig=/) }],
+    });
+    expect(data.messages.map((m: { kind: string }) => m.kind)).toEqual(["original", "status"]);
+
+    const open = await makeRequest(db);
+    expect((await call(open.assignee, "get_request", { id: open.request.id })).data.result).toBeNull();
   });
 
   it("get_request returns body, messages with links, signed absolute attachment URLs, timeline and people", async () => {

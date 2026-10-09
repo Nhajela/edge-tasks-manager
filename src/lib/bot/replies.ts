@@ -36,10 +36,28 @@ export const markDone = (id: number) => `Mark #${id} done?`;
 export const promptExpired = (assignee: Person | null) =>
   `That prompt expired. Send <code>/request ${name(assignee)} …</code> again.`;
 
-export function list(heading: string, items: Request[], total: number, now: Date, empty: string) {
-  if (!items.length) return empty;
-  const more = total > items.length ? `\n…and ${total - items.length} more on the dashboard` : "";
-  return `<b>${esc(heading)}</b> (${total})\n${items.map((r) => line(r, now)).join("\n")}${more}`;
+export type Section = { title: string; count: number; items: Request[] };
+export type Block = { heading: string; total: number; sections: Section[] };
+
+/**
+ * Grouped list (SPEC "Grouping"): per block "<b>For you</b> (4 open)", then each bucket "<b>Act</b> (2)" with its
+ * lines, at most `max` lines in all; whatever didn't fit is counted with a pointer to the dashboard.
+ */
+export function grouped(blocks: Block[], now: Date, empty: string, max: number) {
+  let left = max;
+  const out: string[] = [];
+  for (const b of blocks) {
+    const parts: string[] = [];
+    for (const s of b.sections) {
+      const shown = s.items.slice(0, left);
+      left -= shown.length;
+      if (shown.length) parts.push(`<b>${esc(s.title)}</b> (${s.count})\n${shown.map((r) => line(r, now)).join("\n")}`);
+    }
+    if (parts.length) out.push([`<b>${esc(b.heading)}</b> (${b.total} open)`, ...parts].join("\n\n"));
+  }
+  if (!out.length) return empty;
+  const more = blocks.reduce((n, b) => n + b.total, 0) - (max - left);
+  return out.join("\n\n") + (more > 0 ? `\n\n…and ${more} more on the dashboard` : "");
 }
 
 export const status = (r: Request, requester: Person | null, assignee: Person | null, now: Date) =>

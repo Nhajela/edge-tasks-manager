@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { testDb } from "@tests/helpers/db";
 import { capturingNotifier } from "@tests/helpers/notifier";
 import { actorFor, fakeChatId, makePerson, makeRequest } from "@tests/factories";
@@ -13,6 +13,8 @@ import type { AttachmentInput } from "@/services/requests";
 import type { Effect } from "@/services/types";
 import { handleIntent } from "../handlers";
 import type { Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from "../types";
+
+vi.mock("@/services/grouping", async (orig) => (await import("@tests/helpers/grouping")).withGroupingFallback(orig));
 
 const db = testDb();
 const NOW = new Date("2026-10-12T06:00:00Z"); // 11:30 IST
@@ -241,12 +243,41 @@ describe("list commands", () => {
     ...c,
   });
 
-  it("/mine: max 10, '#id title — status · due' with IST due labels, a dashboard button", async () => {
+  const DAY = 24 * 3600_000;
+  const headers = (html: string) => [...html.matchAll(/^<b>([^<]+)<\/b> \(\d+\)$/gm)].map((m) => m[1]);
+
+  it("/mine: Act, then New, then Upcoming, then Waiting, with IST due labels and a dashboard button", async () => {
+    const t = setup();
+    const me = await makePerson(db);
+    const fresh = await makeRequest(db, { assignee: me, title: "Fresh one" });
+    const act = await makeRequest(db, { assignee: me, title: "Seen, undated" });
+    await requests.markSeen(db, actorFor(me), act.request.id);
+    const later = await makeRequest(db, { assignee: me, title: "Next week" });
+    await requests.markSeen(db, actorFor(me), later.request.id);
+    const due = new Date(NOW.getTime() + 5 * DAY);
+    await requests.setDue(db, systemActor(), later.request.id, due);
+    const blocked = await makeRequest(db, { assignee: me, title: "Blocked" });
+    await requests.setStatus(db, systemActor(), blocked.request.id, { status: "waiting", customStatus: "parts from Panjim" });
+
+    await t.run(list(ctx(group(), me, "/mine"), "mine"));
+    const html = t.sent[0].html;
+    expect(html.split("\n")[0]).toBe("<b>For you</b> (4 open)");
+    expect(headers(html)).toEqual(["Act", "New", "Upcoming", "Waiting"]);
+    const at = (s: string) => html.indexOf(s);
+    expect(at(`#${act.request.id} Seen, undated — Open`)).toBeGreaterThan(at("<b>Act</b>"));
+    expect(at(`#${fresh.request.id} Fresh one — Open`)).toBeGreaterThan(at("<b>New</b>"));
+    expect(html).toContain(`#${later.request.id} Next week — Open · ${dueLabel(due, NOW)!.text}`);
+    expect(html).toContain(`#${blocked.request.id} Blocked — parts from Panjim`);
+    expect(html).not.toContain("more on the dashboard");
+    expect(t.sent[0].buttons?.[0]).toMatchObject({ url: expect.stringContaining("/inbox") });
+  });
+
+  it("/mine: max 10 lines across buckets, the rest counted", async () => {
     const t = setup();
     const me = await makePerson(db);
     const ids: number[] = [];
     for (let i = 0; i < 12; i++) ids.push((await makeRequest(db, { assignee: me, title: `Task ${i}` })).request.id);
-    const due = new Date(NOW.getTime() + 24 * 3600_000);
+    const due = new Date(NOW.getTime() + DAY);
     await requests.setDue(db, systemActor(), ids[11], due);
     await requests.setStatus(db, systemActor(), ids[11], { status: "in_progress", customStatus: "ordering from Panjim" });
     await t.run(list(ctx(group(), me, "/mine"), "mine"));
@@ -255,23 +286,38 @@ describe("list commands", () => {
     expect(lines).toHaveLength(10);
     expect(lines[0]).toBe(`#${ids[11]} Task 11 — ordering from Panjim · ${dueLabel(due, NOW)!.text}`);
     expect(dueLabel(due, NOW)!.text).toBe("due tomorrow");
-    expect(lines[1]).toBe(`#${ids[10]} Task 10 — Open`);
-    expect(html).toContain("2 more");
-    expect(t.sent[0].buttons?.[0]).toMatchObject({ url: expect.stringContaining("/inbox") });
+    expect(lines[1]).toBe(`#${ids[0]} Task 0 — Open`); // New: oldest first
+    expect(html).toContain("…and 2 more on the dashboard");
   });
 
-  it("/raised and /with @bob, and an empty list", async () => {
+  it("/raised leads with overdue; /with @bob replies in two blocks; an empty list", async () => {
     const t = setup();
     const [me, bob] = [await makePerson(db), await makePerson(db)];
-    const a = await makeRequest(db, { requester: me, assignee: bob, title: "Mine to bob" });
+    const soon = await makeRequest(db, { requester: me, assignee: bob, title: "Mine to bob" });
+    await requests.setDue(db, systemActor(), soon.request.id, new Date(NOW.getTime() + DAY));
+    const late = await makeRequest(db, { requester: me, assignee: bob, title: "Late one" });
+    const past = new Date(NOW.getTime() - DAY);
+    await requests.setDue(db, systemActor(), late.request.id, past);
     const b = await makeRequest(db, { requester: bob, assignee: me, title: "Bob to me" });
     const chat = group();
+
     await t.run(list(ctx(chat, me, "/raised"), "raised"));
-    expect(t.sent[0].html).toContain(`#${a.request.id} Mine to bob`);
-    expect(t.sent[0].html).not.toContain("Bob to me");
+    let html = t.sent[0].html;
+    expect(headers(html)).toEqual(["Overdue", "Active"]);
+    expect(html.indexOf(`#${late.request.id} Late one — Open · ${dueLabel(past, NOW)!.text}`)).toBeLessThan(html.indexOf(`#${soon.request.id} Mine to bob`));
+    expect(html).not.toContain("Bob to me");
+
     await t.run(list(ctx(chat, me, "/with"), "with", { who: { by: "username", username: bob.username! } }));
-    expect(t.sent[1].html).toContain(`#${a.request.id}`);
-    expect(t.sent[1].html).toContain(`#${b.request.id}`);
+    html = t.sent[1].html;
+    const [asked, gave] = [html.indexOf(`<b>@${bob.username} asked you</b>`), html.indexOf(`<b>You asked @${bob.username}</b>`)];
+    expect(asked).toBeGreaterThanOrEqual(0);
+    expect(gave).toBeGreaterThan(asked);
+    expect(html.indexOf(`#${b.request.id} Bob to me`)).toBeGreaterThan(asked);
+    expect(html.indexOf(`#${b.request.id}`)).toBeLessThan(gave);
+    expect(html.indexOf(`#${late.request.id}`)).toBeGreaterThan(gave);
+    expect(headers(html)).toEqual(["New", "Overdue", "Active"]);
+    expect(t.sent[1].buttons?.[0]).toMatchObject({ url: expect.stringContaining(`/with/${bob.username}`) });
+
     await t.run(list(ctx(chat, await makePerson(db), "/mine"), "mine"));
     expect(t.sent[2].html).not.toMatch(/#\d+/);
   });
