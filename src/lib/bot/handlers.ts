@@ -10,6 +10,7 @@ import { requestUrl, type Notifier } from "@/services/notifications";
 import * as people from "@/services/people";
 import * as prompts from "@/services/prompts";
 import * as requests from "@/services/requests";
+import { confirmationMessage } from "@/services/titler";
 import type { Actor, Effect, OutgoingMessage } from "@/services/types";
 import * as copy from "./replies";
 import type { HandlerResult, Intent, MessageCtx, PersonRef, TgMessage, TgUser } from "./types";
@@ -105,24 +106,12 @@ async function createAndConfirm(c: Ctx, actor: Actor, m: MessageCtx, input: requ
     return result("request.duplicate", id);
   }
   const assignee = await people.getById(c.db, res.request.assigneeId);
-  const sent = await reply(c, m, copy.created(res.request, assignee), { kind: "created", requestId: id, buttons: [openButton(id)] });
+  // same helper the AI titler uses when it edits this message, so the wording stays stable
+  const conf = confirmationMessage(res.request, assignee);
+  const sent = await reply(c, m, conf.html, { kind: "created", requestId: id, buttons: conf.buttons });
   if (sent.ok && sent.messageId) await requests.setBotConfirmation(c.db, actor, id, { chatId: m.chat.id, messageId: sent.messageId });
-  const effects = res.effects.map((e): Effect =>
-    e.kind === "notify" && e.message.kind === "assigned"
-      ? {
-          ...e,
-          message: {
-            ...e.message,
-            buttons: [
-              ...(e.message.buttons ?? []),
-              { text: "✅ Done", callback_data: `st:${id}:done` },
-              { text: "🔄 On it", callback_data: `st:${id}:in_progress` },
-            ],
-          },
-        }
-      : e,
-  );
-  return result("request.created", id, effects);
+  // the assignee DM already carries the On it / Done buttons (services/notifications)
+  return result("request.created", id, res.effects);
 }
 
 async function appendTo(

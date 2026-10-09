@@ -13,8 +13,6 @@ export function line(r: Request, now: Date) {
   return `#${r.id} ${esc(r.title)} — ${esc(r.customStatus || STATUS_LABEL[r.status])}${due ? ` · ${due.text}` : ""}`;
 }
 
-export const created = (r: Request, assignee: Person | null) => `📝 <b>#${r.id}</b> for ${name(assignee)}: ${esc(r.title)}`;
-
 export const added = (id: number) => `➕ Added to #${id}`;
 
 export const alreadyTracked = (id: number) => `That message is already #${id}.`;
