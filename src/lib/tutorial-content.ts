@@ -154,6 +154,13 @@ export const COMMAND_ENTRIES: Entry[] = [
     help: "reply to a message: quietly track it for you, only you are told",
   },
   {
+    term: "/urgent_request <what>",
+    meaning:
+      "Same as /request, but marked urgent, and it rings the assignee's phone if they turned that on in Settings → Urgent ring (the ntfy app). They can limit who may ring them; by default anyone can.",
+    example: "/urgent_request the generator is smoking",
+    help: "like /request, urgent: rings their phone if they set it up",
+  },
+  {
     term: "/new_request, /new_request_for_me",
     meaning:
       "Quiet versions of /request: same rules, but no group reply and no DM to anyone at creation, only a DM to you. /new_request_for_me always gives it to you, even with an @name in the note.",

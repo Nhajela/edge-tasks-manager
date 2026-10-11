@@ -1,10 +1,13 @@
+import Link from "next/link";
 import { logout } from "@/app/auth/actions";
 import { Initial, SectionTitle, Tag } from "@/components/bits";
 import { McpAccess } from "@/components/settings/McpAccess";
 import { Button } from "@/components/ui/button";
+import { db } from "@/db";
 import { BOT_USERNAME } from "@/lib/constants";
 import { displayName } from "@/lib/names";
 import { requireViewer } from "@/lib/viewer";
+import * as ring from "@/services/ring";
 
 const bot = BOT_USERNAME ? `@${BOT_USERNAME}` : "@bot";
 
@@ -17,6 +20,7 @@ const CHEATS: { cmd: string; what: string }[] = [
   { cmd: "Reply with /append", what: "Adds that message to its author's latest open request. /append 12 adds it to #12. Also /add." },
   { cmd: "Reply to the bot's “#12” message", what: "Your text is added to #12. Replies to a request's messages show up in its thread." },
   { cmd: "/mine · /raised · /with @bob", what: "Open requests to you, from you, or between you and Bob." },
+  { cmd: "/urgent_request fix the projector", what: "Like /request, marked urgent, and rings the assignee's phone if they turned that on below." },
   { cmd: "/status 12 · /done 12", what: "Check or finish #12." },
   { cmd: "Reply with /done · /doing · /waiting · /decline · /reopen", what: "Changes the status of the request that message belongs to. Add a note after it." },
 ];
@@ -24,6 +28,7 @@ const CHEATS: { cmd: string; what: string }[] = [
 export default async function SettingsPage() {
   const { person, actor } = await requireViewer("/settings");
   const name = displayName(person);
+  const ringSettings = await ring.getMine(db(), actor);
 
   return (
     <section className="flex flex-col gap-8">
@@ -73,6 +78,20 @@ export default async function SettingsPage() {
           ))}
         </ul>
         <p className="mt-2 text-[13.5px] text-ink-mute">Photos in or replied-to by a request get attached. Type /help in Telegram for the full list.</p>
+      </div>
+
+      <div>
+        <SectionTitle>Urgent ring</SectionTitle>
+        <Link href="/settings/ring" className="flex items-center justify-between gap-3 rounded-[var(--radius-card)] border border-line-soft bg-card p-4 hover:bg-sand">
+          <span className="text-[14px] leading-5 text-ink-soft">
+            {!ringSettings
+              ? "Off. Set it up so /urgent_request rings your phone."
+              : ringSettings.allowFrom.length
+                ? `On. Only ${ringSettings.allowFrom.map((u) => `@${u}`).join(", ")} can ring you.`
+                : "On. Anyone can ring you."}
+          </span>
+          <span className="shrink-0 font-medium text-blue-deep">{ringSettings ? "Change" : "Set up"} →</span>
+        </Link>
       </div>
 
       <div>

@@ -31,7 +31,7 @@ export function mcpSnippets(siteUrl: string, token: string = PLACEHOLDER) {
   };
 }
 
-function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <Button
@@ -54,7 +54,7 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
   );
 }
 
-function CodeBlock({ title, hint, code }: { title: string; hint?: string; code: string }) {
+export function CodeBlock({ title, hint, code }: { title: string; hint?: string; code: string }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">

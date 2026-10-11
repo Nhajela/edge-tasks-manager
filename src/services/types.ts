@@ -18,7 +18,9 @@ export type Actor = {
 /** Side effects a service wants run after the response (adapters run them with after() + runEffects). */
 export type Effect =
   | { kind: "notify"; message: OutgoingMessage }
-  | { kind: "title"; requestId: number };
+  | { kind: "title"; requestId: number }
+  /** /urgent_request: a max-priority ntfy push to someone's phone (services/ring) */
+  | { kind: "ring"; topic: string; title: string; url: string };
 
 /** A Telegram message to send. Built by services/notifications, sent by a Notifier. */
 export type OutgoingMessage = {

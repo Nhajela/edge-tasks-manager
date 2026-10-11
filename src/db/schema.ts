@@ -313,3 +313,15 @@ export const privateNotes = pgTable(
   },
   (t) => [unique("private_notes_request_person").on(t.requestId, t.personId)],
 );
+
+/**
+ * /urgent_request rings this person's phone through ntfy (SPEC "Urgent ring"). Its own table, not columns on people,
+ * so the topic (anyone who knows it can ring you) never rides along on a Person sent to other viewers.
+ */
+export const ringSettings = pgTable("ring_settings", {
+  personId: integer("person_id").primaryKey().references(() => people.id),
+  ntfyTopic: text("ntfy_topic").notNull(),
+  /** lowercase usernames, no @; empty = anyone can ring */
+  allowFrom: text("allow_from").array().notNull().default(sql`'{}'::text[]`),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});

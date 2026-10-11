@@ -26,6 +26,7 @@ in a direct message (DM). Examples use `@EdgeTasksBot`; use your bot's real user
 | reply to a message with `/request` | "I'll take this": requester = the person who wrote that message, assignee = you. Their text (or photo caption) is the body. Their photo is attached. |
 | reply with `/request @bob two 20L cans` | Requester = the person who wrote that message, assignee = @bob. The extra text is saved as a note. |
 | `/request@EdgeTasksBot …` | Same as `/request` (Telegram adds the bot's name when you pick it from the menu in a group). |
+| `/urgent_request …` | `/request` with priority urgent. If the assignee set an ntfy topic in Settings → Urgent ring (and you're on their allow list, if they made one), their phone rings. |
 | `/append` (also `/add`, `/more`) as a reply | Adds the replied message to the most recent open request **raised by its author** (this chat, last 24h, else anywhere). |
 | `/append 12` as a reply | Adds the replied message to #12. |
 | `/append more details` as a reply to the bot's "#12" message | Adds the text to #12. |

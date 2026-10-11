@@ -243,6 +243,15 @@ describe("parseUpdate: other updates and loop safety", () => {
   });
 });
 
+describe("parseUpdate: /urgent_request", () => {
+  it("is /request, urgent, and not silent", () => {
+    const r = parse(msg("/urgent_request @bob the generator is smoking"));
+    expect(r).toMatchObject({ kind: "request", urgent: true, assignee: toBob, body: "the generator is smoking" });
+    expect(r).not.toHaveProperty("silent");
+    expect(parse(msg("/request @bob fix it"))).not.toHaveProperty("urgent");
+  });
+});
+
 describe("parseUpdate: silent commands", () => {
   it("/new_request is /request, silent", () => {
     expect(parse(msg("/new_request @bob fix the projector"))).toMatchObject({ kind: "request", silent: true, assignee: toBob, body: "fix the projector" });

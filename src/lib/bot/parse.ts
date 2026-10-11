@@ -68,12 +68,12 @@ const parseId = (s: string) => {
 };
 
 /** /request and the leading-@bot mention share these rules (SPEC "Telegram bot"). */
-function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: number, opts: { silent?: boolean; forMe?: boolean } = {}): Intent {
+function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: number, opts: { silent?: boolean; forMe?: boolean; urgent?: boolean } = {}): Intent {
   const lead = leadingPerson(c.message, afterTrigger);
   // "for me": the sender is always the assignee, a leading @name is just part of the note
   const person = opts.forMe ? { by: "user" as const, user: c.from } : lead.person;
   const rest = opts.forMe ? textOf(c.message).slice(afterTrigger).trim() : lead.rest;
-  const silent = opts.silent ? { silent: true } : {};
+  const flags = { ...(opts.silent && { silent: true }), ...(opts.urgent && { urgent: true }) };
   const replied = replyOf(c.message);
   // a bot is never the requester: replying to a bot message is like not replying
   const source = replied && !replied.from?.is_bot ? replied : null;
@@ -81,10 +81,10 @@ function requestIntent(c: MessageCtx, via: "command" | "mention", afterTrigger: 
   if (source) {
     // "give this to me": the replied-to author asks, the replier (or the named @person) does it
     const requester: PersonRef = { by: "user", user: source.from ?? c.from };
-    return { kind: "request", via, requester, assignee: person ?? { by: "user", user: c.from }, body: textOf(source).trim(), note: rest || null, source, attachments, ...silent, ...c };
+    return { kind: "request", via, requester, assignee: person ?? { by: "user", user: c.from }, body: textOf(source).trim(), note: rest || null, source, attachments, ...flags, ...c };
   }
   if (!rest && !attachments.length) return person && !opts.forMe ? { kind: "prompt", assignee: person, ...c } : { kind: "help-mention", ...c };
-  return { kind: "request", via, requester: { by: "user", user: c.from }, assignee: person ?? { by: "superadmin" }, body: rest, note: null, source: null, attachments, ...silent, ...c };
+  return { kind: "request", via, requester: { by: "user", user: c.from }, assignee: person ?? { by: "superadmin" }, body: rest, note: null, source: null, attachments, ...flags, ...c };
 }
 
 function statusIntent(c: MessageCtx, status: Status, args: string, reply: TgMessage | null): Intent {
@@ -148,6 +148,7 @@ export function parseUpdate(update: TgUpdate, ctx: ParseCtx): Intent {
     const args = text.slice(after).trim();
 
     if (name === "request") return requestIntent(c, "command", after);
+    if (name === "urgent_request") return requestIntent(c, "command", after, { urgent: true });
     if (SILENT_REQUEST.includes(name)) return requestIntent(c, "command", after, { silent: true, forMe: name === "new_request_for_me" });
     if (name === "note") {
       // same id rule as status commands: in a thread a leading number is part of the note

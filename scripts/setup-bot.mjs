@@ -29,6 +29,7 @@ await call("setMyName", { name: "Edge Tasks" });
 await call("setMyCommands", {
   commands: [
     { command: "request", description: "Ask someone to do something: /request @bob fix the projector" },
+    { command: "urgent_request", description: "Like /request, but urgent: rings the assignee's phone if they set it up" },
     { command: "append", description: "Reply to a message to add it to a request (or /append 12)" },
     { command: "log", description: "Reply to a message: quietly track it, only you are told" },
     { command: "new_request", description: "Like /request, but quiet: only you get a confirmation" },

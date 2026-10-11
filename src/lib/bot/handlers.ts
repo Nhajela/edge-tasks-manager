@@ -13,6 +13,7 @@ import * as people from "@/services/people";
 import { groupInbox, groupRaised, type InboxBucket } from "@/services/grouping";
 import * as prompts from "@/services/prompts";
 import * as requests from "@/services/requests";
+import * as ring from "@/services/ring";
 import { confirmationMessage } from "@/services/titler";
 import type { Actor, Effect, OutgoingMessage } from "@/services/types";
 import { attachmentsOf, forwardRequest } from "./parse";
@@ -233,7 +234,7 @@ async function onRequest(c: Ctx, i: Extract<Intent, { kind: "request" }>) {
     text: textOf(m),
     link: messageLink(i.chat, m.message_id),
   });
-  return createAndConfirm(c, actor, i, {
+  const res = await createAndConfirm(c, actor, i, {
     requesterId: requester.id,
     assigneeId: assignee.id,
     body,
@@ -241,7 +242,12 @@ async function onRequest(c: Ctx, i: Extract<Intent, { kind: "request" }>) {
     chatTitle: i.chat.title ?? null,
     messages: [...(src ? [msg(src, srcAuthor?.id ?? null)] : []), msg(i.message, person.id)],
     attachments: i.attachments,
+    ...(i.urgent && { priority: "urgent" as const }),
   }, { silent: i.silent, sourceMessageId: src?.message_id });
+  // a Telegram retry (duplicate) must not ring twice
+  if (i.urgent && res.outcome === "request.created" && res.requestId != null)
+    res.effects.push(...(await ring.ringFor(c.db, assignee.id, i.from.username, { title: `#${res.requestId} from ${requester.firstName || requester.username || "someone"}: ${body.slice(0, 200)}`, url: requestUrl(res.requestId) })));
+  return res;
 }
 
 /** SPEC "Private notes": /note adds a line to my note on the thread's request; quiet like /log. */

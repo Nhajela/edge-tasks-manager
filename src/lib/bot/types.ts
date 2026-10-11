@@ -95,6 +95,8 @@ export type Intent =
       attachments: AttachmentInput[];
       /** /new_request, /new_request_for_me: no group reply or DMs at creation; the command is deleted, only the sender hears */
       silent?: boolean;
+      /** /urgent_request: priority urgent, and rings the assignee's phone if they set that up (services/ring) */
+      urgent?: boolean;
     } & MessageCtx)
   /**
    * /log, silent: replying to a human message. Already in a request -> say so; a reply to a request's message -> join

@@ -201,6 +201,14 @@ status command updates that request — no id needed:
 - Reopening keeps the old result in the thread/history but clears the highlighted card.
 Keep it light: one card, no review/approval workflow.
 
+### Urgent ring (`/urgent_request`)
+- `/urgent_request` = `/request` (same parsing, loud), with priority `urgent` (locked, so the titler won't change it).
+- Each person may set, in Settings → Urgent ring, an ntfy topic and an allow list of usernames (empty = anyone).
+  Kept in `ring_settings`, never on `people`: the topic is a secret, since anyone who knows it can ring.
+- On creation (not on a Telegram retry), if the assignee has a topic and the sender is allowed, a `ring` effect POSTs
+  a priority-5 ntfy message (`NTFY_URL`, default https://ntfy.sh) linking to the request. No topic or not allowed →
+  just an urgent request, no ring, nothing said.
+
 ### Silent commands (`/log`, `/new_request`, `/new_request_for_me`)
 For logging without noise. Quiet **only at creation**: once the request exists, status changes and comments notify
 as usual.
