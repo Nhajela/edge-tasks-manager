@@ -19,6 +19,7 @@ export function mcpSnippets(siteUrl: string, token: string = PLACEHOLDER) {
   const url = `${siteUrl}/api/mcp`;
   const auth = `Authorization: Bearer ${token}`;
   return {
+    url,
     claude: `claude mcp add --transport http edge-tasks ${url} --header "${auth}"`,
     json: JSON.stringify({ mcpServers: { "edge-tasks": { type: "http", url, headers: { Authorization: `Bearer ${token}` } } } }, null, 2),
     curl: [
@@ -118,6 +119,14 @@ export function McpAccess() {
         </p>
       </div>
 
+      {snippets && (
+        <CodeBlock
+          title="claude.ai, Claude Desktop and other apps that sign in"
+          hint="Add this URL as a custom connector. The app sends you here to log in and press Allow; the connection then shows up below as a token you can revoke."
+          code={snippets.url}
+        />
+      )}
+
       {error && (
         <Note tone="danger" role="alert">
           {error}
@@ -195,7 +204,7 @@ export function McpAccess() {
               Replace <code className="font-mono">{PLACEHOLDER}</code> below with your token. Create a new one if you lost it.
             </p>
           )}
-          <CodeBlock title="Claude Code" hint="Run this in a terminal." code={snippets.claude} />
+          <CodeBlock title="Claude Code" hint="Run this in a terminal. Or run it without --header and log in when Claude Code asks." code={snippets.claude} />
           <CodeBlock title="Other MCP clients" hint="Add this to the client's JSON config (Cursor, Claude Desktop via a bridge, etc.)." code={snippets.json} />
           <CodeBlock title="Test it" hint="Should list the tools. A 401 means the token is wrong or revoked." code={snippets.curl} />
         </div>
