@@ -17,6 +17,7 @@ One line per task. The details are in each task's file under `docs/progress/`.
 | web-admin | done, merged | [progress/web-admin.md](progress/web-admin.md): /admin, /admin/activity, /settings |
 | ai-context-ui | done, merged | [progress/ai-context-ui.md](progress/ai-context-ui.md): /context page, AiQuestionCard |
 | mcp-settings-ui | done, merged | [progress/mcp-settings-ui.md](progress/mcp-settings-ui.md): token create, copy and revoke, setup snippets |
+| mcp-oauth | done | [progress/mcp-oauth.md](progress/mcp-oauth.md): OAuth (CIMD + DCR, PKCE) for /api/mcp; Allow mints a revocable etm_ token |
 
 ## Integration notes (2026-10-09)
 

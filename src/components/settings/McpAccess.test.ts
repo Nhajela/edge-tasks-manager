@@ -4,6 +4,10 @@ import { mcpSnippets } from "./McpAccess";
 describe("mcpSnippets", () => {
   const s = mcpSnippets("https://tasks.example.org", "etm_abc");
 
+  it("gives the connector URL for apps that sign in with OAuth", () => {
+    expect(s.url).toBe("https://tasks.example.org/api/mcp");
+  });
+
   it("builds the Claude Code command", () => {
     expect(s.claude).toBe(
       'claude mcp add --transport http edge-tasks https://tasks.example.org/api/mcp --header "Authorization: Bearer etm_abc"',

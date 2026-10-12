@@ -102,8 +102,13 @@ claude mcp add --transport http edge-tasks https://<your-site>/api/mcp --header 
 
 Other clients: streamable HTTP at `https://<your-site>/api/mcp` with the header `Authorization: Bearer etm_…`.
 Tools: `whoami`, `list_requests`, `get_request`, `create_request`, `update_status`, `add_comment`, `set_due`,
-`set_priority`. Photos come back as signed public URLs the client can fetch. claude.ai connectors need OAuth, which
-the server doesn't support yet.
+`set_priority`. Photos come back as signed public URLs the client can fetch.
+
+claude.ai, Claude Desktop and other apps that sign in: add `https://<your-site>/api/mcp` as a custom connector. The app
+finds the OAuth endpoints from the 401 (`/.well-known/oauth-protected-resource`), registers itself (a client ID
+metadata document, or dynamic client registration for older clients), and sends you to `/connect` to log in with
+Telegram and press Allow. Allow makes an ordinary `etm_` token named after the app, so it is listed on `/settings` and
+revoking it there disconnects the app. Claude Code can do the same: leave out `--header` and log in when it asks.
 
 ## Roadmap
 
@@ -112,4 +117,3 @@ the server doesn't support yet.
 - Verb-bucket grouping for the inbox, raised page, bot and MCP (SPEC "Grouping").
 - Status commands from anywhere in a thread: `/doing`, `/waiting`, `/decline`, `/reopen` (SPEC "Status from anywhere
   in the thread").
-- OAuth for the MCP server, so claude.ai can connect.
