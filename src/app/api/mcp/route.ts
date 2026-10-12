@@ -1,6 +1,7 @@
 import { createMcpHandler, isLegacyRequest, WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { db } from "@/db";
 import { actorFromToken } from "@/lib/actor";
+import { requestOrigin, wwwAuthenticate } from "@/lib/oauth/metadata";
 import { createMcpServer } from "@/lib/mcp/server";
 import * as people from "@/services/people";
 import * as tokens from "@/services/tokens";
@@ -38,11 +39,13 @@ async function resolveActor(header: string | null): Promise<Actor | null> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const actor = await resolveActor(request.headers.get("authorization"));
+  const header = request.headers.get("authorization");
+  const actor = await resolveActor(header);
+  // the header's resource_metadata is how an OAuth client (claude.ai) finds /oauth/authorize; a revoked token lands here too
   if (!actor)
     return Response.json(
-      { error: "unauthorized", error_description: "Send Authorization: Bearer etm_… (make a token on /settings)." },
-      { status: 401, headers: { "WWW-Authenticate": 'Bearer realm="edge-tasks"' } },
+      { error: "unauthorized", error_description: "Connect from your AI app to sign in, or send Authorization: Bearer etm_… (make a token on /settings)." },
+      { status: 401, headers: { "WWW-Authenticate": wwwAuthenticate(requestOrigin(request), Boolean(header?.trim())) } },
     );
   if (await isLegacyRequest(request)) return serveLegacy(request, actor);
   return handler.fetch(request, { authInfo: { token: "[sealed]", clientId: "etm", scopes: [], extra: { actor } } });
