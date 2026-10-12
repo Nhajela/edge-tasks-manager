@@ -3,6 +3,7 @@ import { Column, Mark } from "@/components/bits";
 import { CommandBubble } from "@/components/EmptyState";
 import { LoginButton } from "@/components/LoginButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { Contribute } from "@/components/landing/Contribute";
 import { Tutorial } from "@/components/landing/Tutorial";
 import { safeNext } from "@/lib/links";
 import { getSession } from "@/lib/session";
@@ -55,6 +56,9 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ n
       </Column>
       <div className="border-t border-line-soft">
         <Tutorial bot={BOT} />
+      </div>
+      <div className="border-t border-line-soft">
+        <Contribute />
       </div>
     </main>
   );
