@@ -20,6 +20,7 @@ People raise "requests" (tasks, shown as #12) for each other, mostly from Telegr
 - Start with whoami, then list_requests (inbox by default, open ones by default). Use get_request for the full story: body, the Telegram messages and reply thread with links, photos, and the timeline of every change.
 - Attachment URLs are public signed links: fetch them directly, no auth needed.
 - Statuses: open, in_progress, waiting (blocked on someone), done, declined. custom_label is a free-text label shown instead of the status name (e.g. "ordering from Panjim").
+- To add context, add_comment (shows on the timeline) or edit_description (append, prepend, exact find-and-replace, or set the whole description); set_title renames.
 - Changes notify the other person on Telegram (status changes, comments with notify=true, new requests to the assignee). Confirm with the user before changing or creating anything on their behalf.
 - Times are India time (IST, Asia/Kolkata). Every change is recorded in the audit log as made via MCP by this person.`;
 
@@ -287,6 +288,47 @@ export function createMcpServer(actor: Actor, deps: McpDeps = {}): McpServer {
       annotations: WRITE,
     },
     tool("add_comment", async (a) => updated(await requests.comment(db, actor, a.id, { text: a.text, notify: a.notify ?? true }))),
+  );
+
+  server.registerTool(
+    "edit_description",
+    {
+      title: "Edit description",
+      description:
+        "Change a request's description (its body; the original Telegram messages stay as they were). mode append / prepend adds text after / before it (a blank line between); replace swaps old_string for new_string, which must match the current body exactly once (or set replace_all); set replaces the whole description with text. Returns the request with the final body. Nobody is notified; use add_comment to tell them.",
+      inputSchema: z.object({
+        id,
+        mode: z.enum(["append", "prepend", "replace", "set"]),
+        text: z.string().optional().describe("append, prepend, set: the text to add, or the whole new description."),
+        old_string: z.string().optional().describe("replace: exact text to find, copied from get_request's body."),
+        new_string: z.string().optional().describe("replace: what old_string becomes; empty deletes it."),
+        replace_all: z.boolean().optional().describe("replace: change every match instead of requiring exactly one. Default false."),
+      }),
+      annotations: WRITE,
+    },
+    tool("edit_description", async (a) => {
+      let edit: requests.BodyEdit;
+      if (a.mode === "replace") {
+        if (a.old_string == null || a.new_string == null) throw new ValidationError("replace needs old_string and new_string.");
+        edit = { mode: "replace", oldString: a.old_string, newString: a.new_string, all: a.replace_all };
+      } else {
+        if (!a.text?.trim()) throw new ValidationError(`${a.mode} needs text.`);
+        edit = { mode: a.mode, text: a.text };
+      }
+      const res = await requests.editBody(db, actor, a.id, edit);
+      return { ...updated(res), body: res.request.body, ...(a.mode === "replace" ? { replacements: res.replacements } : {}) };
+    }),
+  );
+
+  server.registerTool(
+    "set_title",
+    {
+      title: "Set title",
+      description: "Rename a request (max 200 characters). Once set by a person, the AI titler won't change it.",
+      inputSchema: z.object({ id, title: z.string().min(1) }),
+      annotations: WRITE,
+    },
+    tool("set_title", async (a) => updated(await requests.setTitle(db, actor, a.id, a.title))),
   );
 
   server.registerTool(

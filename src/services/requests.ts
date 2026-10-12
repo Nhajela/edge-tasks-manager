@@ -5,7 +5,7 @@ import { CLOSED, PRIORITIES, STATUSES, STATUS_LABEL } from "@/lib/constants";
 import { heuristicTitle } from "@/lib/title";
 import type { AiStatus, Attachment, AuditEntry, Person, Priority, Request, RequestMessage, Status } from "@/lib/types";
 import * as audit from "./audit";
-import { NotFoundError, PermissionError, TEXT_LIMITS, ValidationError, requireText } from "./errors";
+import { ConflictError, NotFoundError, PermissionError, TEXT_LIMITS, ValidationError, requireText } from "./errors";
 import * as notifications from "./notifications";
 import * as peopleSvc from "./people";
 import { requireAdmin, requireManage, requirePerson, requireView, isParticipant } from "./permissions";
@@ -580,6 +580,54 @@ export async function setBody(db: DbClient, actor: Actor, id: number, body: stri
   const [request] = await db.update(requests).set({ body: text, updatedAt: new Date() }).where(eq(requests.id, id)).returning();
   await audit.record(db, actor, { action: "request.body", entityType: "request", entityId: id, summary: "Edited the description", data: { from: before.body, to: text } });
   return { request, effects: [] };
+}
+
+export type BodyEdit =
+  | { mode: "set" | "append" | "prepend"; text: string }
+  /** oldString must match exactly once, unless all; newString may be empty to delete it */
+  | { mode: "replace"; oldString: string; newString: string; all?: boolean };
+
+function applyBodyEdit(body: string, edit: BodyEdit): { text: string; replacements: number } {
+  if (edit.mode !== "replace") {
+    if (edit.mode === "set" || !body.trim()) return { text: edit.text, replacements: 0 };
+    const [first, second] = edit.mode === "append" ? [body.trimEnd(), edit.text.trim()] : [edit.text.trim(), body.trimStart()];
+    return { text: `${first}\n\n${second}`, replacements: 0 };
+  }
+  if (!edit.oldString) throw new ValidationError("old_string is required.", { field: "oldString" });
+  const count = body.split(edit.oldString).length - 1;
+  if (count === 0) throw new ValidationError("old_string was not found in the description. Copy it exactly from get_request's body.");
+  if (count > 1 && !edit.all)
+    throw new ValidationError(`old_string appears ${count} times in the description. Add surrounding text to make it unique, or set replace_all.`, { count });
+  return { text: edit.all ? body.split(edit.oldString).join(edit.newString) : body.replace(edit.oldString, () => edit.newString), replacements: edit.all ? count : 1 };
+}
+
+/**
+ * setBody for agents: append, prepend, an exact find-and-replace, or a whole new text. The write only lands if the
+ * body is still the one the edit was computed from; on a concurrent edit it recomputes from the new body.
+ */
+export async function editBody(db: DbClient, actor: Actor, id: number, edit: BodyEdit): Promise<Result & { replacements: number }> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const before = await load(db, id);
+    requireManage(actor, before);
+    const { text: next, replacements } = applyBodyEdit(before.body, edit);
+    const text = requireText(next, "Description", TEXT_LIMITS.body);
+    if (text === before.body) return { request: before, effects: [], replacements };
+    const [request] = await db
+      .update(requests)
+      .set({ body: text, updatedAt: new Date() })
+      .where(and(eq(requests.id, id), eq(requests.body, before.body)))
+      .returning();
+    if (!request) continue; // someone else edited it in between: redo the edit on their text
+    await audit.record(db, actor, {
+      action: "request.body",
+      entityType: "request",
+      entityId: id,
+      summary: "Edited the description",
+      data: { from: before.body, to: text, mode: edit.mode },
+    });
+    return { request, effects: [], replacements };
+  }
+  throw new ConflictError("The description keeps changing under this edit. Read it again and retry.", { id });
 }
 
 /** The titler's bookkeeping: ai_status and its open question. */

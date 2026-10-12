@@ -50,7 +50,18 @@ describe("mcp server", () => {
     const list = await rpc(createMcpServer(actorFromToken(me), { db }), "tools/list");
     const names = list.result.tools.map((t: { name: string }) => t.name).sort();
     expect(names).toEqual(
-      ["add_comment", "create_request", "get_request", "list_requests", "set_due", "set_priority", "update_status", "whoami"].sort(),
+      [
+        "add_comment",
+        "create_request",
+        "edit_description",
+        "get_request",
+        "list_requests",
+        "set_due",
+        "set_priority",
+        "set_title",
+        "update_status",
+        "whoami",
+      ].sort(),
     );
     for (const t of list.result.tools) expect(t.description.length).toBeGreaterThan(30);
     const get = list.result.tools.find((t: { name: string }) => t.name === "get_request");
@@ -224,6 +235,37 @@ describe("mcp server", () => {
       "request.priority",
     ]);
     expect(log.slice(1).every((l) => l.via === "mcp")).toBe(true);
+  });
+
+  it("edit_description appends and replaces, returning the final body; set_title renames and locks; nobody is notified", async () => {
+    const me = await makePerson(db);
+    const requester = await makePerson(db, { startedBot: true });
+    const { request } = await makeRequest(db, { assignee: me, requester, body: "Order 20 coconuts." });
+    const id = request.id;
+
+    let res = await call(me, "edit_description", { id, mode: "append", text: "Deliver to the kitchen." });
+    expect(res.data).toMatchObject({ id, body: "Order 20 coconuts.\n\nDeliver to the kitchen." });
+    expect(res.scheduled).toEqual([]);
+    res = await call(me, "edit_description", { id, mode: "replace", old_string: "20", new_string: "30" });
+    expect(res.data).toMatchObject({ body: "Order 30 coconuts.\n\nDeliver to the kitchen.", replacements: 1 });
+    res = await call(me, "edit_description", { id, mode: "replace", old_string: "mangoes", new_string: "x" });
+    expect(res.text).toMatch(/VALIDATION_FAILED: old_string was not found/);
+    res = await call(me, "edit_description", { id, mode: "replace", old_string: "30" });
+    expect(res.text).toMatch(/needs old_string and new_string/);
+    res = await call(me, "edit_description", { id, mode: "append" });
+    expect(res.text).toMatch(/append needs text/);
+
+    res = await call(me, "set_title", { id, title: "Coconuts for Friday" });
+    expect(res.data).toMatchObject({ title: "Coconuts for Friday" });
+    expect((await requests.getById(db, actorFor(me), id)).titleLocked).toBe(true);
+
+    const log = await audit.listForEntity(db, "request", id);
+    expect(log.map((l) => [l.action, l.via])).toEqual([
+      ["request.create", expect.anything()],
+      ["request.body", "mcp"],
+      ["request.body", "mcp"],
+      ["request.title", "mcp"],
+    ]);
   });
 
   it("update_status records result_note and result_message_id (a request_messages id from get_request)", async () => {
