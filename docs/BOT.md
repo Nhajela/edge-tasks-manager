@@ -45,9 +45,13 @@ in a direct message (DM). Examples use `@EdgeTasksBot`; use your bot's real user
 
 Lists show up to 10 items as `#id title — status · due`, with a button to open the dashboard.
 
-When the bot creates a request, it replies to your message with "📝 #12 for @bob: <title>" and a link to the request.
-If @bob has started the bot, it also sends them a DM. The title is a quick guess at first. The bot edits the message
-when the AI title is ready.
+In a group the bot stays quiet: it reacts 👍 to your message and DMs @bob the request (Telegram has no ✅ reaction).
+Replies to your message still land on the request. If @bob has never started the bot (so can't be DMed), or reactions
+are off in that chat, it replies "📝 #12 for @bob: <title>" with a link instead, and edits that message when the AI
+title is ready. In a DM with the bot you always get the 📝 reply.
+
+If something goes wrong with a message in a group, the bot reacts 🤷 and DMs you the reason, instead of posting in
+the group. If it can't DM you, it says it in the group.
 
 ### Mentions (no command needed)
 

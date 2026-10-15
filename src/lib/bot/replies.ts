@@ -14,6 +14,12 @@ export function line(r: Request, now: Date) {
   return `#${r.id} ${esc(r.title)} — ${esc(r.customStatus || STATUS_LABEL[r.status])}${due ? ` · ${due.text}` : ""}`;
 }
 
+/** Telegram only allows its own reaction set (no ✅). */
+export const REACT_CREATED = "👍";
+export const REACT_FAILED = "🤷";
+
+export const failedIn = (chatTitle: string | null, why: string) => `Couldn't do your message${chatTitle ? ` in <b>${esc(chatTitle)}</b>` : ""}: ${why}`;
+
 export const added = (id: number) => `➕ Added to #${id}`;
 
 export const alreadyTracked = (id: number) => `That message is already #${id}.`;

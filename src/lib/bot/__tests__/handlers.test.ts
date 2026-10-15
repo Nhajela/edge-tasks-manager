@@ -20,7 +20,7 @@ import type { Intent, MessageCtx, PersonRef, TgChat, TgMessage, TgUser } from ".
 const db = testDb();
 const NOW = new Date("2026-10-12T06:00:00Z"); // 11:30 IST
 
-function setup(now = NOW) {
+function setup(now = NOW, opts: { reactions?: boolean } = {}) {
   const cap = capturingNotifier();
   const calls: { method: string; body: Record<string, unknown> }[] = [];
   const deps = {
@@ -28,7 +28,7 @@ function setup(now = NOW) {
     now: () => now,
     tg: async (method: string, body: Record<string, unknown>) => {
       calls.push({ method, body });
-      return { ok: true };
+      return { ok: method !== "setMessageReaction" || opts.reactions !== false };
     },
   };
   return { ...cap, calls, deps, run: (i: Intent) => handleIntent(db, i, deps) };
@@ -57,8 +57,8 @@ const requestIntent = (c: MessageCtx, over: Partial<Extract<Intent, { kind: "req
 });
 
 describe("request", () => {
-  it("creates, replies with the confirmation, stores its id, DMs the assignee with Done / On it; retry is a no-op", async () => {
-    const t = setup();
+  it("reactions off: creates, replies with the confirmation, stores its id, DMs the assignee with Done / On it; retry is a no-op", async () => {
+    const t = setup(NOW, { reactions: false });
     const alice = await makePerson(db);
     const bob = await makePerson(db, { startedBot: true });
     const c = ctx(group(), alice, `/request @${bob.username} fix the projector in the main hall`);
@@ -85,6 +85,46 @@ describe("request", () => {
     const again = await t.run(requestIntent(c, { assignee: { by: "username", username: bob.username! } }));
     expect(again).toMatchObject({ outcome: "request.duplicate", requestId: r.id, effects: [] });
     expect(t.sent).toHaveLength(1);
+  });
+
+  it("in a group: 👍 on the message instead of a reply, the assignee still gets the DM", async () => {
+    const t = setup();
+    const [alice, bob] = [await makePerson(db), await makePerson(db, { startedBot: true })];
+    const c = ctx(group(), alice, `@eci_tasks_bot @${bob.username} fix the projector`);
+    const res = await t.run(requestIntent(c, { via: "mention", assignee: { by: "username", username: bob.username! } }));
+    expect(res.outcome).toBe("request.created");
+    expect(t.sent).toEqual([]);
+    expect(t.calls).toContainEqual({ method: "setMessageReaction", body: { chat_id: c.chat.id, message_id: c.message.message_id, reaction: [{ type: "emoji", emoji: "👍" }] } });
+    expect(res.effects.find((e) => e.kind === "notify")).toBeTruthy();
+    // replies to the command message still land on the request
+    expect(await requests.findRequestByTelegramMessage(db, c.chat.id, c.message.message_id)).toBe(res.requestId);
+  });
+
+  it("in a group, an assignee the bot can't DM still gets the group reply (it's how they find out)", async () => {
+    const t = setup();
+    const res = await t.run(requestIntent(ctx(group(), await makePerson(db), "/request get more chairs")));
+    expect(res.outcome).toBe("request.created");
+    expect(t.calls.filter((x) => x.method === "setMessageReaction")).toEqual([]);
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0]).toMatchObject({ kind: "created" });
+  });
+
+  it("an error in a group: 🤷 on the message and the reason by DM; DM blocked -> the old group reply", async () => {
+    const alice = await makePerson(db);
+    const t = setup();
+    const c = ctx(group(), alice, "/request @ fix it");
+    const res = await t.run(requestIntent(c, { assignee: { by: "username", username: "" } }));
+    expect(res.outcome).toBe("request.error");
+    expect(t.calls).toContainEqual(expect.objectContaining({ method: "setMessageReaction", body: expect.objectContaining({ reaction: [{ type: "emoji", emoji: "🤷" }] }) }));
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0]).toMatchObject({ chatId: alice.telegramId });
+    expect(t.sent[0].html).toContain("Volunteers");
+
+    const cap = capturingNotifier({ blockedChatIds: [alice.telegramId!] });
+    const deps = { notifier: cap.notifier, now: () => NOW, tg: async () => ({ ok: true }) };
+    const c2 = ctx(group(), alice, "/request @ fix it");
+    await handleIntent(db, requestIntent(c2, { assignee: { by: "username", username: "" } }), deps);
+    expect(cap.sent.map((m) => m.chatId)).toEqual([alice.telegramId, c2.chat.id]);
   });
 
   it("no DM when the assignee never started the bot; no @ goes to the organiser", async () => {

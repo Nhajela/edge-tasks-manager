@@ -85,7 +85,7 @@ export async function handleIntent(db: DbClient, intent: Intent, deps: HandlerDe
   } catch (e) {
     if (!(e instanceof ServiceError)) console.error(`bot ${intent.kind} failed`, e);
     // threads and membership changes are silent: never answer messages that weren't addressed to the bot
-    if ("message" in intent && "chat" in intent && intent.kind !== "thread") await reply(c, intent, errorMessage(e)).catch(() => {});
+    if ("message" in intent && "chat" in intent && intent.kind !== "thread") await sayError(c, intent, errorMessage(e)).catch(() => {});
     return result(`${intent.kind}.error`);
   }
 }
@@ -94,6 +94,21 @@ export async function handleIntent(db: DbClient, intent: Intent, deps: HandlerDe
 
 function reply(c: Ctx, m: MessageCtx, html: string, extra: Partial<OutgoingMessage> = {}) {
   return c.deps.notifier.send({ chatId: m.chat.id, kind: "bot_reply", html, replyTo: m.message.message_id, ...extra });
+}
+
+/** A reaction on their message (no text in the group). False if Telegram refused it (reactions off in that chat). */
+async function react(c: Ctx, m: MessageCtx, emoji: string) {
+  const res = (await tg(c)("setMessageReaction", { chat_id: m.chat.id, message_id: m.message.message_id, reaction: [{ type: "emoji", emoji }] }).catch(() => null)) as { ok?: boolean } | null;
+  return Boolean(res?.ok);
+}
+
+/** Errors in a group: 🤷 on the message and the reason by DM. In a DM, or if either fails, the old reply. */
+async function sayError(c: Ctx, m: MessageCtx, html: string) {
+  if (m.chat.type !== "private" && (await react(c, m, copy.REACT_FAILED))) {
+    const dm = await c.deps.notifier.send({ chatId: m.from.id, kind: "bot_reply", html: copy.failedIn(m.chat.title ?? null, html) });
+    if (dm.ok) return;
+  }
+  await reply(c, m, html);
 }
 
 const tg = (c: Ctx) => c.deps.tg ?? (async (method: string, body: Record<string, unknown>) => (await import("@/lib/telegram")).tg(method, body));
@@ -172,6 +187,9 @@ async function createAndConfirm(
     return result("request.created", id, res.effects.filter((e) => e.kind !== "notify"));
   }
   const assignee = await people.getById(c.db, res.request.assigneeId);
+  // in a group just 👍 the message; the assignee hears by DM. If they can't be DMed, the group reply is how they find out.
+  const dmsAssignee = assignee?.startedBot || assignee?.id === actor.personId;
+  if (m.chat.type !== "private" && dmsAssignee && (await react(c, m, copy.REACT_CREATED))) return result("request.created", id, res.effects);
   // same helper the AI titler uses when it edits this message, so the wording stays stable
   const conf = confirmationMessage(res.request, assignee);
   const sent = await reply(c, m, conf.html, { kind: "created", requestId: id, buttons: conf.buttons });
